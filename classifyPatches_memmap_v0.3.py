@@ -12,7 +12,7 @@ import cPickle as pickle
 from collections import OrderedDict
 import sys
 import lmdb
-from utils import threaded_generator, printLosses
+from utils import threaded_generator, printLosses, validate_result
 from memmap_negPos_batchgen import memmapGenerator, memmapGeneratorDataAugm
 
 n_training_samples = 374546

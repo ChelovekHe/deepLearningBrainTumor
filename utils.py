@@ -54,23 +54,26 @@ def printLosses(all_training_losses, all_validation_losses, all_valid_accur, fna
 
 
 def validate_result(img, convLayer):
-    weights_w = convLayer.get_params()[0].get_value()
-    weights_b = convLayer.get_params()[1].get_value()
     img_for_cnn = img[np.newaxis, np.newaxis, :, :]
     filtered_by_cnn = lasagne.layers.get_output(convLayer, img_for_cnn).eval()
+    plt.figure(figsize=(12, 12))
+    for i in xrange(filtered_by_cnn.shape[0]):
+        plt.subplot(int(np.ceil(np.sqrt(filtered_by_cnn.shape[0]))), int(np.ceil(np.sqrt(filtered_by_cnn.shape[0]))), i+1)
+        plt.imshow(filtered_by_cnn[0, i, :, :], cmap="gray", interpolation="nearest")
+        plt.axis('off')
+    plt.savefig("../results/filtered_by_cnn.png")
+    plt.close()
+
+    weights_w = convLayer.get_params()[0].get_value()
+    weights_b = convLayer.get_params()[1].get_value()
+
     from scipy.signal import convolve2d
     res_scipy = []
     numFilters = weights_w.shape[0]
     for i in xrange(numFilters):
         weights = weights_w[i, 0, :, :]
         res_scipy.append(lasagne.nonlinearities.rectify(convolve2d(img, weights, mode='same') + weights_b[i]))
-    plt.figure(figsize=(12, 12))
-    for i in xrange(numFilters):
-        plt.subplot(int(np.ceil(np.sqrt(numFilters))), int(np.ceil(np.sqrt(numFilters))), i+1)
-        plt.imshow(filtered_by_cnn[0, i, :, :], cmap="gray", interpolation="nearest")
-        plt.axis('off')
-    plt.savefig("../results/filtered_by_cnn.png")
-    plt.close()
+
     plt.figure(figsize=(12, 12))
     for i in xrange(numFilters):
         plt.subplot(int(np.ceil(np.sqrt(numFilters))), int(np.ceil(np.sqrt(numFilters))), i+1)

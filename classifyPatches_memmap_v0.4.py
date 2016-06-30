@@ -1,5 +1,3 @@
-# DESCR: Now using elu instead of ReLU's. Seems to work better (this network actually achieves 98% accuracy). Also uses Batch Normalization
-
 __author__ = 'fabian'
 import theano
 import lasagne
@@ -7,16 +5,17 @@ import theano.tensor as T
 import numpy as np
 import os.path as path
 import matplotlib.pyplot as plt
-from lasagne.layers import InputLayer, Pool2DLayer, DenseLayer, NonlinearityLayer, DropoutLayer
+from lasagne.layers import InputLayer, Pool2DLayer, DenseLayer, NonlinearityLayer, DropoutLayer, BatchNormLayer
 from lasagne.layers.dnn import Conv2DDNNLayer as ConvLayer
 from lasagne.layers import Deconv2DLayer, ConcatLayer
 import cPickle as pickle
 from collections import OrderedDict
 import sys
 import lmdb
-import cPickle
 from utils import threaded_generator, printLosses, validate_result
-from memmap_negPos_batchgen import memmapGenerator
+from memmap_negPos_batchgen import memmapGenerator, memmapGeneratorDataAugm
+import cPickle
+
 
 n_training_samples = 374546
 n_pos_train = 25702
@@ -28,36 +27,39 @@ CLASS_IMBALANCE = n_training_samples/float(n_pos_train) # negative/positive exam
 w_0 = 1
 w_1 = n_training_samples/float(n_pos_train)
 EXPERIMENT_NAME = "classifyPatches_memmap_v0.4.py"
-BATCH_SIZE = 128
+BATCH_SIZE = 100
+
 
 
 def build_net():
     net = OrderedDict()
 
     net['input'] = InputLayer((BATCH_SIZE, 1, 128, 128))
-    net['norm'] = lasagne.layers.BatchNormLayer(net['input'])
+    net['batchNorm'] = BatchNormLayer(net['input'])
 
-    net['conv_1_1'] = ConvLayer(net['norm'], 16, 3, pad=1, stride=1, nonlinearity=lasagne.nonlinearities.elu)
+    net['conv_1_1'] = ConvLayer(net['batchNorm'], 12, 7, pad='same', stride=1, nonlinearity=lasagne.nonlinearities.elu)
     net['conv_1_1_do'] = DropoutLayer(net['conv_1_1'], p=0.1)
-    net['conv_1_2'] = ConvLayer(net['conv_1_1'], 16, 3, pad=1, stride=1, nonlinearity=lasagne.nonlinearities.elu)
+    net['conv_1_2'] = ConvLayer(net['conv_1_1_do'], 12, 5, pad='same', stride=1, nonlinearity=lasagne.nonlinearities.elu)
     net['conv_1_2_do'] = DropoutLayer(net['conv_1_2'], p=0.1)
-    net['maxPool_1'] = Pool2DLayer(net['conv_1_2'], 2, mode='max')
+    net['maxPool_1_1'] = Pool2DLayer(net['conv_1_2_do'], 2, mode='max')
 
-    net['conv_2_1'] = ConvLayer(net['maxPool_1'], 32, 3, pad=1, stride=1, nonlinearity=lasagne.nonlinearities.elu)
+    net['conv_2_1'] = ConvLayer(net['maxPool_1_1'], 24, 3, pad='same', stride=1, nonlinearity=lasagne.nonlinearities.elu)
     net['conv_2_1_do'] = DropoutLayer(net['conv_2_1'], p=0.2)
-    net['conv_2_2'] = ConvLayer(net['conv_2_1'], 32, 3, pad=1, stride=1, nonlinearity=lasagne.nonlinearities.elu)
+    net['conv_2_2'] = ConvLayer(net['conv_2_1_do'], 24, 3, pad='same', stride=1, nonlinearity=lasagne.nonlinearities.elu)
     net['conv_2_2_do'] = DropoutLayer(net['conv_2_2'], p=0.2)
-    net['maxPool_2'] = Pool2DLayer(net['conv_2_2'], 2, mode='max')
+    net['maxPool_2_1'] = Pool2DLayer(net['conv_2_2_do'], 2, mode='max')
 
-    net['conv_3_1'] = ConvLayer(net['maxPool_2'], 64, 3, pad=1, stride=1, nonlinearity=lasagne.nonlinearities.elu)
+    net['conv_3_1'] = ConvLayer(net['maxPool_2_1'], 48, 3, pad=1, stride=1)
     net['conv_3_1_do'] = DropoutLayer(net['conv_3_1'], p=0.3)
-    net['conv_3_2'] = ConvLayer(net['conv_3_1'], 64, 3, pad=1, stride=1, nonlinearity=lasagne.nonlinearities.elu)
+    net['maxPool_3_1'] = Pool2DLayer(net['conv_3_1_do'], 2, mode='max')
+    net['conv_3_2'] = ConvLayer(net['maxPool_3_1'], 48, 3, pad=1, stride=1)
     net['conv_3_2_do'] = DropoutLayer(net['conv_3_2'], p=0.3)
-    net['conv_3_3'] = ConvLayer(net['conv_3_2'], 64, 3, pad=1, stride=1, nonlinearity=lasagne.nonlinearities.elu)
+    net['maxPool_3_2'] = Pool2DLayer(net['conv_3_2_do'], 2, mode='max')
+    net['conv_3_3'] = ConvLayer(net['maxPool_3_2'], 48, 3, pad=1, stride=1)
     net['conv_3_3_do'] = DropoutLayer(net['conv_3_3'], p=0.3)
-    net['maxPool_3'] = Pool2DLayer(net['conv_3_3'], 2, mode='max')
+    net['maxPool_3_3'] = Pool2DLayer(net['conv_3_3_do'], 2, mode='max')
 
-    net['fc_4'] = DenseLayer(net['maxPool_3'], 150, nonlinearity=lasagne.nonlinearities.elu)
+    net['fc_4'] = DenseLayer(net['maxPool_3_3'], 200, nonlinearity=lasagne.nonlinearities.elu)
     net['fc_4_dropOut'] = DropoutLayer(net['fc_4'], p=0.5)
 
     net['prob'] = DenseLayer(net['fc_4_dropOut'], 2, nonlinearity=lasagne.nonlinearities.softmax)
@@ -66,18 +68,11 @@ def build_net():
 
 net = build_net()
 
-'''with open("../results/classifyPatches_memmap_v0.4.py_Params.pkl", 'r') as f:
-    params = cPickle.load(f)
-lasagne.layers.set_all_param_values(net['prob'], params)
-with open("../results/classifyPatches_memmap_v0.4.py_allLossesNAccur.pkl", 'r') as f:
-    [all_training_losses, all_validation_losses, all_validation_accuracies] = cPickle.load(f)'''
-
 n_batches_per_epoch = np.floor(n_training_samples/float(BATCH_SIZE))
 n_test_batches = np.floor(n_val_samples/float(BATCH_SIZE))
 
 x_sym = T.tensor4()
 y_sym = T.ivector()
-w_sym = T.vector()
 
 prediction_train = lasagne.layers.get_output(net['prob'], x_sym, deterministic=False)
 prediction_test = lasagne.layers.get_output(net['prob'], x_sym, deterministic=True)
@@ -85,7 +80,7 @@ loss = lasagne.objectives.categorical_crossentropy(prediction_train, y_sym)
 
 loss = loss.mean()
 
-l2_loss = lasagne.regularization.regularize_network_params(net['prob'], lasagne.regularization.l2) * 5e-4
+l2_loss = lasagne.regularization.regularize_network_params(net['prob'], lasagne.regularization.l2) * 5e-5
 loss += l2_loss
 
 acc = T.mean(T.eq(T.argmax(prediction_test, axis=1), y_sym), dtype=theano.config.floatX)
@@ -109,16 +104,14 @@ val_neg_memmap = memmap("../data/patchClassification128_neg_val_2.memmap", dtype
 all_training_losses = []
 all_validation_losses = []
 all_validation_accuracies = []
-n_epochs = 50
+n_epochs = 20
 for epoch in range(n_epochs):
     print "epoch: ", epoch
     train_loss = 0
     train_acc_tmp = 0
     train_loss_tmp = 0
     batch_ctr = 0
-    for data, seg, labels in threaded_generator(memmapGenerator(train_neg_memmap, train_pos_memmap, BATCH_SIZE, n_pos_train, n_neg_train)):
-        if np.sum(labels) == 0:
-            continue
+    for data, seg, labels in threaded_generator(memmapGeneratorDataAugm(train_neg_memmap, train_pos_memmap, BATCH_SIZE, n_pos_train, n_neg_train)):
         if batch_ctr != 0 and batch_ctr % int(np.floor(n_batches_per_epoch/10.)) == 0:
             print "number of batches: ", batch_ctr, "/", n_batches_per_epoch
             print "training_loss since last update: ", train_loss_tmp/np.floor(n_batches_per_epoch/10.), " train accuracy: ", train_acc_tmp/np.floor(n_batches_per_epoch/10.)
@@ -140,7 +133,7 @@ for epoch in range(n_epochs):
     test_loss = 0
     accuracies = []
     valid_batch_ctr = 0
-    for data, seg, labels in threaded_generator(memmapGenerator(val_neg_memmap, val_pos_memmap, BATCH_SIZE, n_pos_val, n_neg_val)):
+    for data, seg, labels in threaded_generator(memmapGeneratorDataAugm(val_neg_memmap, val_pos_memmap, BATCH_SIZE, n_pos_val, n_neg_val)):
         loss, acc = val_fn(data, labels)
         test_loss += loss
         accuracies.append(acc)
@@ -154,10 +147,15 @@ for epoch in range(n_epochs):
     all_validation_accuracies.append(np.mean(accuracies))
     printLosses(all_training_losses, all_validation_losses, all_validation_accuracies, "../results/%s.png" % EXPERIMENT_NAME, 10)
     learning_rate *= 0.9
+    with open("../results/%s_Params_ep%d.pkl" % (EXPERIMENT_NAME, epoch), 'w') as f:
+        cPickle.dump(lasagne.layers.get_all_param_values(net['prob']), f)
+    with open("../results/%s_allLossesNAccur_ep%d.pkl"% (EXPERIMENT_NAME, epoch), 'w') as f:
+        cPickle.dump([all_training_losses, all_validation_losses, all_validation_accuracies], f)
 
 import IPython
 IPython.embed()
 
+import cPickle
 with open("../results/%s_Params.pkl"%EXPERIMENT_NAME, 'w') as f:
     cPickle.dump(lasagne.layers.get_all_param_values(net['prob']), f)
 with open("../results/%s_allLossesNAccur.pkl"%EXPERIMENT_NAME, 'w') as f:
