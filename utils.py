@@ -3,7 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import lasagne
 from memmap_negPos_batchgen import memmapGenerator
-
+from numpy import memmap
+import cPickle
 
 def threaded_generator(generator, num_cached=10):
     # this code is writte by jan Schluter
@@ -32,22 +33,24 @@ def threaded_generator(generator, num_cached=10):
         item = queue.get()
 
 
-def printLosses(all_training_losses, all_validation_losses, all_valid_accur, fname, samplesPerEpoch=10):
+def printLosses(all_training_losses, all_training_accs, all_validation_losses, all_valid_accur, fname, samplesPerEpoch=10):
     fig, ax1 = plt.subplots()
     trainLoss_x_values = np.arange(1/float(samplesPerEpoch), len(all_training_losses)/float(samplesPerEpoch)+0.000001, 1/float(samplesPerEpoch))
     val_x_values = np.arange(1, len(all_validation_losses)+0.001, 1)
-    ax1.plot(trainLoss_x_values, all_training_losses)
-    ax1.plot(val_x_values, all_validation_losses)
+    ax1.plot(trainLoss_x_values, all_training_losses, 'b--')
+    ax1.plot(val_x_values, all_validation_losses, color='b')
     ax1.set_ylabel('loss')
     ax1.set_xlabel('epoch')
 
     ax2 = ax1.twinx()
+    ax2.plot(trainLoss_x_values, all_training_accs, 'r--')
     ax2.plot(val_x_values, all_valid_accur, color='r')
-    ax2.set_ylabel('validAccur')
+    ax2.set_ylabel('accuracy')
     for t2 in ax2.get_yticklabels():
         t2.set_color('r')
 
-    ax1.legend(['trainLoss', 'validLoss'])
+    ax1.legend(['trainLoss', 'validLoss'], loc=0)
+    ax2.legend(['trainAcc', 'validAcc'], loc=2)
     # ax2.legend(['valAccuracy'])
     plt.savefig(fname)
     plt.close()
@@ -57,8 +60,8 @@ def validate_result(img, convLayer):
     img_for_cnn = img[np.newaxis, np.newaxis, :, :]
     filtered_by_cnn = lasagne.layers.get_output(convLayer, img_for_cnn).eval()
     plt.figure(figsize=(12, 12))
-    for i in xrange(filtered_by_cnn.shape[0]):
-        plt.subplot(int(np.ceil(np.sqrt(filtered_by_cnn.shape[0]))), int(np.ceil(np.sqrt(filtered_by_cnn.shape[0]))), i+1)
+    for i in xrange(filtered_by_cnn.shape[1]):
+        plt.subplot(int(np.ceil(np.sqrt(filtered_by_cnn.shape[1]))), int(np.ceil(np.sqrt(filtered_by_cnn.shape[1]))), i+1)
         plt.imshow(filtered_by_cnn[0, i, :, :], cmap="gray", interpolation="nearest")
         plt.axis('off')
     plt.savefig("../results/filtered_by_cnn.png")
@@ -83,17 +86,20 @@ def validate_result(img, convLayer):
     plt.close()
 
 def plot_some_data():
-    from numpy import memmap
-    n_pos_train = 25702
-    n_neg_train = 348844
-    train_pos_memmap = memmap("patchClassification128_pos_train_2.memmap", dtype=np.float32, mode="r+", shape=(450000 * 10000. / 126964., 128*128*2))
-    train_neg_memmap = memmap("patchClassification128_neg_train_2.memmap", dtype=np.float32, mode="r+", shape=(450000, 128 * 128 * 2))
-    val_pos_memmap = memmap("patchClassification128_pos_val_2.memmap", dtype=np.float32, mode="r+", shape=(450000 * 10000. / 126964 * 0.15, 128 * 128 * 2))
-    val_neg_memmap = memmap("patchClassification128_neg_val_2.memmap", dtype=np.float32, mode="r+", shape=(450000 * 0.15, 128 * 128 * 2))
+    with open("../data/patchClassification_memmap_properties.pkl", 'r') as f:
+        memmap_properties = cPickle.load(f)
+    n_pos_train = memmap_properties["train_pos"]
+    n_neg_train = memmap_properties["train_neg"]
+    n_pos_val = memmap_properties["val_pos"]
+    n_neg_val = memmap_properties["val_neg"]
+    train_pos_memmap = memmap("../data/patchClassification_train_pos.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["train_pos_shape"])
+    train_neg_memmap = memmap("../data/patchClassification_train_neg.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["train_neg_shape"])
+    val_pos_memmap = memmap("../data/patchClassification_val_pos.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["val_pos_shape"])
+    val_neg_memmap = memmap("../data/patchClassification_val_neg.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["val_neg_shape"])
     i = 0
     ctr = 0
     for data, seg, labels in memmapGenerator(train_neg_memmap, train_pos_memmap, 128, n_pos_train, n_neg_train):
-        if i == 5:
+        if i == 2:
             break
         for img, segm, lab in zip(data, seg, labels):
             plt.figure(figsize=(12,12))
@@ -111,3 +117,14 @@ def plot_some_data():
             plt.close()
             ctr += 1
         i += 1
+
+
+def plot_layer_weights(layer):
+    conv_1_1_weights = layer.get_params()[0].get_value()
+
+    plt.figure(figsize=(12, 12))
+    for i in range(conv_1_1_weights.shape[0]):
+        plt.subplot(int(np.ceil(np.sqrt(conv_1_1_weights.shape[0]))), int(np.ceil(np.sqrt(conv_1_1_weights.shape[0]))), i+1)
+        plt.imshow(conv_1_1_weights[i, 0, :, :], cmap="gray", interpolation="nearest")
+        plt.axis('off')
+    plt.show()

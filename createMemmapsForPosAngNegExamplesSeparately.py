@@ -13,14 +13,19 @@ from numpy import memmap
 PATCH_SIZE = 128
 PERCENT_VAL = 0.15
 
-# from lmdb experiments we know that we will have roughly 115k train and 21k test images. create memmaps of this
-# size and save how many entries are actually used. that is not very elegant but who cares!?
-# each entry has size 128**2 * 2 + 1 (patch + segmentation + label). we save everything as float and convert to int in
-# batchgen
-train_neg_memmap = memmap("patchClassification128_neg_train_2.memmap", dtype=np.float32, mode="w+", shape=(450000, 128*128*2))
-train_pos_memmap = memmap("patchClassification128_pos_train_2.memmap", dtype=np.float32, mode="w+", shape=(450000 * 10000./126964., 128*128*2))
-val_pos_memmap = memmap("patchClassification128_pos_val_2.memmap", dtype=np.float32, mode="w+", shape=(450000*PERCENT_VAL * 10000./126964, 128*128*2))
-val_neg_memmap = memmap("patchClassification128_neg_val_2.memmap", dtype=np.float32, mode="w+", shape=(450000*PERCENT_VAL, 128*128*2))
+entries_per_datum = PATCH_SIZE**2 * 2
+expected_pos_to_neg_ratio = 10000./126964.
+expected_n_samples = 450000
+
+train_neg_shape = (expected_n_samples, entries_per_datum)
+train_pos_shape = (int(expected_n_samples * expected_pos_to_neg_ratio), entries_per_datum)
+val_neg_shape = (int(expected_n_samples * PERCENT_VAL), entries_per_datum)
+val_pos_shape = (int(expected_n_samples * PERCENT_VAL * expected_pos_to_neg_ratio), entries_per_datum)
+
+train_neg_memmap = memmap("patchClassification_train_neg.memmap", dtype=np.float32, mode="w+", shape=train_neg_shape)
+train_pos_memmap = memmap("patchClassification_train_pos.memmap", dtype=np.float32, mode="w+", shape=train_pos_shape)
+val_neg_memmap = memmap("patchClassification_val_neg.memmap", dtype=np.float32, mode="w+", shape=val_neg_shape)
+val_pos_memmap = memmap("patchClassification_val_pos.memmap", dtype=np.float32, mode="w+", shape=val_pos_shape)
 
 path = "/home/fabian/datasets/Hirntumor_von_David/"
 subdirs = [d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))]
@@ -57,10 +62,15 @@ for curr_dir in subdirs:
     t1_image = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(curr_dir, "T1_m2_bc.nii.gz")))
     outside_value = t1_image[0,0,0]
     t1_image -= outside_value
-    max_val = t1_image.max()
-    if np.isnan(max_val):
-        IPython.embed()
-    t1_image /= max_val
+    # max_val = t1_image.max()
+    # if np.isnan(max_val):
+    #     IPython.embed()
+    # t1_image /= max_val
+
+    # std works better than max on MRT because of outliers. We should invest some time into better normalization
+    # techniques
+    img_std = t1_image[t1_image != 0].std()
+    t1_image /= img_std
 
     # create joint segmentation map (useful for later)
     seg_ce = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(curr_dir, "seg_ce.nii.gz")))
@@ -80,10 +90,12 @@ for curr_dir in subdirs:
     # iterate over patches
     for z in xrange(t1_image.shape[0]):
         y0 = 0
-        # print z
+        # print "z", z
         while (y0 + PATCH_SIZE) < t1_image.shape[2]:
             x0 = 0
+            # print "y0", y0
             while (x0 + PATCH_SIZE) < t1_image.shape[1]:
+                # print "x0", x0
                 patch = t1_image[z, x0:x0+PATCH_SIZE, y0:y0+PATCH_SIZE]
                 seg_patch = seg_combined[z, x0:x0+PATCH_SIZE, y0:y0+PATCH_SIZE]
                 patch = patch[np.newaxis, :, :]
@@ -134,3 +146,19 @@ for curr_dir in subdirs:
 print "train: ", n_negative_train + n_positive_train, n_positive_train, n_negative_train
 print "test: ", n_positive_val + n_negative_val, n_positive_val, n_negative_val
 print "image mean: ", img_mean / float(n_negative_train + n_positive_train + n_positive_val + n_negative_val)
+
+my_dict = {
+    "train_total" : n_negative_train + n_positive_train,
+    "train_pos": n_positive_train,
+    "train_neg": n_negative_train,
+    "val_total" : n_positive_val + n_negative_val,
+    "val_pos": n_positive_val,
+    "val_neg": n_negative_val,
+    "train_neg_shape": train_neg_shape,
+    "train_pos_shape": train_pos_shape,
+    "val_neg_shape": val_neg_shape,
+    "val_pos_shape": val_pos_shape
+
+}
+with open("patchClassification_memmap_properties.pkl", 'w') as f:
+    cPickle.dump(my_dict, f)
