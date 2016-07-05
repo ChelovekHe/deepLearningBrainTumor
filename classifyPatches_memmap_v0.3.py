@@ -67,6 +67,11 @@ def build_net():
 
 net = build_net()
 
+with open("../results/%s_Params.pkl"%EXPERIMENT_NAME, 'r') as f:
+    params = cPickle.load(f)
+    lasagne.layers.set_all_param_values(net['prob'], params)
+
+
 n_batches_per_epoch = np.floor(n_training_samples/float(BATCH_SIZE))
 n_test_batches = np.floor(n_val_samples/float(BATCH_SIZE))
 

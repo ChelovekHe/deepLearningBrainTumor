@@ -128,3 +128,95 @@ def plot_layer_weights(layer):
         plt.imshow(conv_1_1_weights[i, 0, :, :], cmap="gray", interpolation="nearest")
         plt.axis('off')
     plt.show()
+
+def imgSaveFalsePositiveFalseNegativeCorrectPositiveCorrectNegative(pred_fn, n_images=16, BATCH_SIZE = 50):
+    with open("../data/patchClassification_memmap_properties.pkl", 'r') as f:
+        memmap_properties = cPickle.load(f)
+    n_pos_val = memmap_properties["val_pos"]
+    n_neg_val = memmap_properties["val_neg"]
+    val_pos_memmap = memmap("../data/patchClassification_val_pos.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["val_pos_shape"])
+    val_neg_memmap = memmap("../data/patchClassification_val_neg.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["val_neg_shape"])
+    n_fpos = 0
+    n_fneg = 0
+    n_tpos = 0
+    n_tneg = 0
+    # it is simpler to just extract the fpos, fneg, tpos and tneg images one cathegory after the other. speed doesnt matter here
+    plt.figure(figsize=(16,16))
+    for data, seg, labels in memmapGenerator(val_neg_memmap, val_pos_memmap, BATCH_SIZE, n_pos_val, n_neg_val):
+        if n_fpos < n_images:
+            pred = pred_fn(data).argmax(-1)
+            idx = np.where((pred == 1) & (labels == 0))[0]
+            for id in idx:
+                plt.subplot(int(np.ceil(np.sqrt(n_images))), int(np.ceil(np.sqrt(n_images))), n_fpos)
+                plt.imshow(data[id, 0, :, :], cmap="gray", interpolation="nearest")
+                plt.text(0, 0, labels[id], color='red', bbox=dict(facecolor='white', alpha=1))
+                plt.text(0, 12, pred[id], color='green', bbox=dict(facecolor='white', alpha=1))
+                plt.text(8, 0, 'true', color='blue')
+                plt.text(8, 12, 'predicted', color='blue')
+                n_fpos += 1
+                if n_fpos >= n_images:
+                    break
+        else:
+            break
+    plt.savefig("../results/falsePositives.png")
+    plt.close()
+
+    plt.figure(figsize=(16,16))
+    for data, seg, labels in memmapGenerator(val_neg_memmap, val_pos_memmap, BATCH_SIZE, n_pos_val, n_neg_val):
+        if n_fneg < n_images:
+            pred = pred_fn(data).argmax(-1)
+            idx = np.where((pred == 0) & (labels == 1))[0]
+            for id in idx:
+                plt.subplot(int(np.ceil(np.sqrt(n_images))), int(np.ceil(np.sqrt(n_images))), n_fneg)
+                plt.imshow(data[id, 0, :, :], cmap="gray", interpolation="nearest")
+                plt.text(0, 0, labels[id], color='green', bbox=dict(facecolor='white', alpha=1))
+                plt.text(0, 12, pred[id], color='red', bbox=dict(facecolor='white', alpha=1))
+                plt.text(8, 0, 'true', color='blue')
+                plt.text(8, 12, 'predicted', color='blue')
+                n_fneg += 1
+                if n_fneg >= n_images:
+                    break
+        else:
+            break
+    plt.savefig("../results/falseNegatives.png")
+    plt.close()
+
+    plt.figure(figsize=(16,16))
+    for data, seg, labels in memmapGenerator(val_neg_memmap, val_pos_memmap, BATCH_SIZE, n_pos_val, n_neg_val):
+        if n_tpos < n_images:
+            pred = pred_fn(data).argmax(-1)
+            idx = np.where((pred == 1) & (labels == 1))[0]
+            for id in idx:
+                plt.subplot(int(np.ceil(np.sqrt(n_images))), int(np.ceil(np.sqrt(n_images))), n_tpos)
+                plt.imshow(data[id, 0, :, :], cmap="gray", interpolation="nearest")
+                plt.text(0, 0, labels[id], color='green', bbox=dict(facecolor='white', alpha=1))
+                plt.text(0, 12, pred[id], color='green', bbox=dict(facecolor='white', alpha=1))
+                plt.text(8, 0, 'true', color='blue')
+                plt.text(8, 12, 'predicted', color='blue')
+                n_tpos += 1
+                if n_tpos >= n_images:
+                    break
+        else:
+            break
+    plt.savefig("../results/truePositives.png")
+    plt.close()
+
+    plt.figure(figsize=(16,16))
+    for data, seg, labels in memmapGenerator(val_neg_memmap, val_pos_memmap, BATCH_SIZE, n_pos_val, n_neg_val):
+        if n_tneg < n_images:
+            pred = pred_fn(data).argmax(-1)
+            idx = np.where((pred == 0) & (labels == 0))[0]
+            for id in idx:
+                plt.subplot(int(np.ceil(np.sqrt(n_images))), int(np.ceil(np.sqrt(n_images))), n_tneg)
+                plt.imshow(data[id, 0, :, :], cmap="gray", interpolation="nearest")
+                plt.text(0, 0, labels[id], color='red', bbox=dict(facecolor='white', alpha=1))
+                plt.text(0, 12, pred[id], color='red', bbox=dict(facecolor='white', alpha=1))
+                plt.text(8, 0, 'true', color='blue')
+                plt.text(8, 12, 'predicted', color='blue')
+                n_tneg += 1
+                if n_tneg >= n_images:
+                    break
+        else:
+            break
+    plt.savefig("../results/trueNegatives.png")
+    plt.close()
