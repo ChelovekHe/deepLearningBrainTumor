@@ -1,4 +1,4 @@
-# using VGG style convnet with batchnorm. deeper than 0.5, replaced maxPool by conv with stride 2 and unsed globalPoolLayer at the end
+# now using residual learning
 
 __author__ = 'fabian'
 import theano
@@ -7,8 +7,9 @@ import theano.tensor as T
 import numpy as np
 import os.path as path
 import matplotlib.pyplot as plt
-from lasagne.layers import InputLayer, Pool2DLayer, DenseLayer, NonlinearityLayer, DropoutLayer, BatchNormLayer, GlobalPoolLayer
+from lasagne.layers import InputLayer, Pool2DLayer, DenseLayer, NonlinearityLayer, DropoutLayer, BatchNormLayer, GlobalPoolLayer, ElemwiseSumLayer, PadLayer, ExpressionLayer
 from lasagne.layers.dnn import Conv2DDNNLayer as ConvLayer
+from lasagne.nonlinearities import rectify, softmax
 from lasagne.layers import Deconv2DLayer, ConcatLayer
 import cPickle as pickle
 from collections import OrderedDict
@@ -28,38 +29,77 @@ n_neg_val = memmap_properties["val_neg"]
 n_training_samples = memmap_properties["train_total"]
 n_val_samples = memmap_properties["val_total"]
 
-EXPERIMENT_NAME = "classifyPatches_memmap_v0.6.py"
-BATCH_SIZE = 100
+EXPERIMENT_NAME = "classifyPatches_memmap_v0.7.py"
+BATCH_SIZE = 50
 
-def build_net():
-    net = OrderedDict()
 
-    net['input'] = InputLayer((BATCH_SIZE, 1, 128, 128))
+def build_cnn(input_var=None, n=5):
+    # create a residual learning building block with two stacked 3x3 convlayers as in paper
+    def residual_block(l, increase_dim=False, projection=False):
+        input_num_filters = l.output_shape[1]
+        if increase_dim:
+            first_stride = (2,2)
+            out_num_filters = input_num_filters*2
+        else:
+            first_stride = (1,1)
+            out_num_filters = input_num_filters
 
-    net['conv_1_1'] = batch_norm(ConvLayer(net['input'], 10, 5, pad='same', stride=1, nonlinearity=lasagne.nonlinearities.elu))
-    net['conv_1_2'] = batch_norm(ConvLayer(net['conv_1_1'], 10, 3, pad='same', stride=2, nonlinearity=lasagne.nonlinearities.elu))
+        stack_1 = batch_norm(ConvLayer(l, num_filters=out_num_filters, filter_size=(3,3), stride=first_stride, nonlinearity=rectify, pad='same', W=lasagne.init.HeNormal(gain='relu'), flip_filters=False))
+        stack_2 = batch_norm(ConvLayer(stack_1, num_filters=out_num_filters, filter_size=(3,3), stride=(1,1), nonlinearity=None, pad='same', W=lasagne.init.HeNormal(gain='relu'), flip_filters=False))
 
-    net['conv_2_1'] = batch_norm(ConvLayer(net['conv_1_2'], 20, 3, pad='same', stride=1, nonlinearity=lasagne.nonlinearities.elu))
-    net['conv_2_2'] = batch_norm(ConvLayer(net['conv_2_1'], 20, 3, pad='same', stride=2, nonlinearity=lasagne.nonlinearities.elu))
+        # add shortcut connections
+        if increase_dim:
+            if projection:
+                # projection shortcut, as option B in paper
+                projection = batch_norm(ConvLayer(l, num_filters=out_num_filters, filter_size=(1,1), stride=(2,2), nonlinearity=None, pad='same', b=None, flip_filters=False))
+                block = NonlinearityLayer(ElemwiseSumLayer([stack_2, projection]),nonlinearity=rectify)
+            else:
+                # identity shortcut, as option A in paper
+                identity = ExpressionLayer(l, lambda X: X[:, :, ::2, ::2], lambda s: (s[0], s[1], s[2]//2, s[3]//2))
+                padding = PadLayer(identity, [out_num_filters//4,0,0], batch_ndim=1)
+                block = NonlinearityLayer(ElemwiseSumLayer([stack_2, padding]),nonlinearity=rectify)
+        else:
+            block = NonlinearityLayer(ElemwiseSumLayer([stack_2, l]),nonlinearity=rectify)
 
-    net['conv_3_1'] = batch_norm(ConvLayer(net['conv_2_2'], 40, 3, pad='same', stride=1, nonlinearity=lasagne.nonlinearities.elu))
-    net['conv_3_2'] = batch_norm(ConvLayer(net['conv_3_1'], 40, 3, pad='same', stride=2, nonlinearity=lasagne.nonlinearities.elu))
+        return block
 
-    net['conv_4_1'] = batch_norm(ConvLayer(net['conv_3_2'], 80, 3, pad='same', stride=1, nonlinearity=lasagne.nonlinearities.elu))
-    net['conv_4_2'] = batch_norm(ConvLayer(net['conv_4_1'], 80, 3, pad='same', stride=2, nonlinearity=lasagne.nonlinearities.elu))
+    # Building the network
+    l_in = InputLayer(shape=(BATCH_SIZE, 1, 128, 128), input_var=input_var)
 
-    net['conv_5_1'] = batch_norm(ConvLayer(net['conv_4_2'], 160, 3, pad='same', stride=1, nonlinearity=lasagne.nonlinearities.elu))
-    net['conv_5_2'] = batch_norm(ConvLayer(net['conv_5_1'], 160, 3, pad='same', stride=2, nonlinearity=lasagne.nonlinearities.elu))
+    # first layer, output is 16 x 128 x 128
+    l = batch_norm(ConvLayer(l_in, num_filters=16, filter_size=(3,3), stride=(1,1), nonlinearity=rectify, pad='same', W=lasagne.init.HeNormal(gain='relu'), flip_filters=False))
 
-    net['globalPool'] = GlobalPoolLayer(net['conv_5_2'])
+    # first stack of residual blocks, output is 16 x 128 x 128
+    for _ in range(n):
+        l = residual_block(l)
 
-    net['fc'] = batch_norm(DenseLayer(net['globalPool'], 200, nonlinearity=lasagne.nonlinearities.elu))
+    # second stack of residual blocks, output is 32 x 64 x 64
+    l = residual_block(l, increase_dim=True, projection=True)
+    for _ in range(1,n):
+        l = residual_block(l)
 
-    net['prob'] = batch_norm(DenseLayer(net['fc'], 2, nonlinearity=lasagne.nonlinearities.softmax))
+    # third stack of residual blocks, output is 64 x 32 x 32
+    l = residual_block(l, increase_dim=True, projection=True)
+    for _ in range(1,n):
+        l = residual_block(l)
 
-    return net
+    # fourth stack of residual blocks, output is 128 x 16 x 16
+    l = residual_block(l, increase_dim=True, projection=True)
+    for _ in range(1,n):
+        l = residual_block(l)
 
-net = build_net()
+    # average pooling
+    l = GlobalPoolLayer(l)
+
+    # fully connected layer
+    network = DenseLayer(l, num_units=2,
+                         W=lasagne.init.HeNormal(),
+                         nonlinearity=softmax)
+
+    return network
+
+
+net = build_cnn(n=2)
 
 '''params_from = "classifyPatches_memmap_v0.3.py"
 with open("../results/%s_Params.pkl"%params_from, 'r') as f:
@@ -73,21 +113,21 @@ n_test_batches = np.floor(n_val_samples/float(BATCH_SIZE))
 x_sym = T.tensor4()
 y_sym = T.ivector()
 
-l2_loss = lasagne.regularization.regularize_network_params(net['prob'], lasagne.regularization.l2) * 5e-4
+l2_loss = lasagne.regularization.regularize_network_params(net, lasagne.regularization.l2) * 5e-4
 
-prediction_train = lasagne.layers.get_output(net['prob'], x_sym, deterministic=False)
+prediction_train = lasagne.layers.get_output(net, x_sym, deterministic=False)
 loss = lasagne.objectives.categorical_crossentropy(prediction_train, y_sym)
 loss = loss.mean()
 loss += l2_loss
 acc_train = T.mean(T.eq(T.argmax(prediction_train, axis=1), y_sym), dtype=theano.config.floatX)
 
-prediction_test = lasagne.layers.get_output(net['prob'], x_sym, deterministic=True)
+prediction_test = lasagne.layers.get_output(net, x_sym, deterministic=True)
 loss_val = lasagne.objectives.categorical_crossentropy(prediction_test, y_sym)
 loss_val = loss_val.mean()
 loss_val += l2_loss
 acc = T.mean(T.eq(T.argmax(prediction_test, axis=1), y_sym), dtype=theano.config.floatX)
 
-params = lasagne.layers.get_all_params(net['prob'], trainable=True)
+params = lasagne.layers.get_all_params(net, trainable=True)
 learning_rate = theano.shared(np.float32(0.001))
 updates = lasagne.updates.adam(loss, params, learning_rate=learning_rate)
 
@@ -153,13 +193,13 @@ for epoch in range(n_epochs):
     printLosses(all_training_losses, all_training_accs, all_validation_losses, all_validation_accuracies, "../results/%s.png" % EXPERIMENT_NAME, 10)
     learning_rate *= 0.3
     with open("../results/%s_Params_ep%d.pkl" % (EXPERIMENT_NAME, epoch), 'w') as f:
-        cPickle.dump(lasagne.layers.get_all_param_values(net['prob']), f)
+        cPickle.dump(lasagne.layers.get_all_param_values(net), f)
     with open("../results/%s_allLossesNAccur_ep%d.pkl"% (EXPERIMENT_NAME, epoch), 'w') as f:
         cPickle.dump([all_training_losses, all_validation_losses, all_validation_accuracies], f)
 
 import cPickle
 with open("../results/%s_Params.pkl"%EXPERIMENT_NAME, 'w') as f:
-    cPickle.dump(lasagne.layers.get_all_param_values(net['prob']), f)
+    cPickle.dump(lasagne.layers.get_all_param_values(net), f)
 with open("../results/%s_allLossesNAccur.pkl"%EXPERIMENT_NAME, 'w') as f:
     cPickle.dump([all_training_losses, all_validation_losses, all_validation_accuracies], f)
 
