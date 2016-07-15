@@ -173,8 +173,8 @@ def memmapGeneratorDataAugm_t1km_flair(array_neg, array_pos, BATCH_SIZE, n_eleme
         neg_data = np.array(array_neg[idx_neg])
         data[:len(idx_pos)] = pos_data[:, :2].astype(np.float32)
         data[len(idx_pos):] = neg_data[:, :2].astype(np.float32)
-        seg[:len(idx_pos)] = pos_data[:, 2].astype(np.int32)
-        seg[len(idx_pos):] = neg_data[:, 2].astype(np.int32)
+        seg[:len(idx_pos)][:, 0, :, :] = pos_data[:, 2].astype(np.int32)
+        seg[len(idx_pos):][:, 0, :, :] = neg_data[:, 2].astype(np.int32)
         labels[:len(idx_pos)] = 1
         labels[len(idx_pos):] = 0
         data = data[idx_for_shuffle]
