@@ -86,25 +86,27 @@ def validate_result(img, convLayer):
     plt.close()
 
 def plot_some_data():
-    with open("../data/patchClassification_memmap_properties_2.pkl", 'r') as f:
+    with open("../data/patchClassification_ws_resampled_properties.pkl", 'r') as f:
         memmap_properties = cPickle.load(f)
     n_pos_train = memmap_properties["train_pos"]
     n_neg_train = memmap_properties["train_neg"]
     n_pos_val = memmap_properties["val_pos"]
     n_neg_val = memmap_properties["val_neg"]
-    train_pos_memmap = memmap("../data/patchClassification_train_pos_2.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["train_pos_shape"])
-    train_neg_memmap = memmap("../data/patchClassification_train_neg_2.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["train_neg_shape"])
-    val_pos_memmap = memmap("../data/patchClassification_val_pos_2.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["val_pos_shape"])
-    val_neg_memmap = memmap("../data/patchClassification_val_neg_2.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["val_neg_shape"])
+    train_pos_memmap = memmap("../data/patchClassification_ws_resampled_train_pos.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["train_pos_shape"])
+    train_neg_memmap = memmap("../data/patchClassification_ws_resampled_train_neg.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["train_neg_shape"])
+    val_pos_memmap = memmap("../data/patchClassification_ws_resampled_val_pos.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["val_pos_shape"])
+    val_neg_memmap = memmap("../data/patchClassification_ws_resampled_val_neg.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["val_neg_shape"])
     i = 0
     ctr = 0
-    for data, seg, labels in memmapGenerator(train_neg_memmap, train_pos_memmap, 128, n_pos_train, n_neg_train):
+    for data, seg, labels in memmapGenerator(val_neg_memmap, val_pos_memmap, 128, n_pos_val, n_neg_val):
         if i == 2:
             break
-        for img, segm, lab in zip(data, seg, labels):
-            maxVal = np.max(img)
+        data2 = np.array(data)
+        for img, segm, lab in zip(data2, seg, labels):
+            img -= img.min()
+            img /= img.max()
             plt.figure(figsize=(12,12))
-            img = np.array(img[0]/maxVal) # dont write into memmap
+            img = np.array(img[0]) # dont write into memmap
             img = np.repeat(img[np.newaxis, :, :], 3, 0)
             img = img.transpose((1, 2, 0))
             img[:, :, 0][segm[0] > 1] *= 1.0
@@ -221,3 +223,5 @@ def imgSaveFalsePositiveFalseNegativeCorrectPositiveCorrectNegative(pred_fn, n_i
             break
     plt.savefig("../results/trueNegatives.png")
     plt.close()
+
+

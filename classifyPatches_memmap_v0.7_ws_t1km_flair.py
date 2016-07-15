@@ -16,11 +16,16 @@ from collections import OrderedDict
 import sys
 import lmdb
 from utils import threaded_generator, printLosses, validate_result, plot_layer_weights
-from memmap_negPos_batchgen import memmapGenerator, memmapGeneratorDataAugm
+from memmap_negPos_batchgen import memmapGenerator, memmapGeneratorDataAugm, memmapGenerator_t1km_flair, memmapGeneratorDataAugm_t1km_flair
 import cPickle
 from lasagne.layers import batch_norm
 
-with open("../data/patchClassification_memmap_properties.pkl", 'r') as f:
+
+EXPERIMENT_NAME = "classifyPatches_memmap_v0.7_ws_resample_neu_t1km_flair"
+memmap_name = "patchClassification_ws_resampled_t1km_flair"
+BATCH_SIZE = 70
+
+with open("../data/%s_properties.pkl" % memmap_name, 'r') as f:
     memmap_properties = cPickle.load(f)
 n_pos_train = memmap_properties["train_pos"]
 n_neg_train = memmap_properties["train_neg"]
@@ -29,8 +34,7 @@ n_neg_val = memmap_properties["val_neg"]
 n_training_samples = memmap_properties["train_total"]
 n_val_samples = memmap_properties["val_total"]
 
-EXPERIMENT_NAME = "classifyPatches_memmap_v0.7_old_memmap.py"
-BATCH_SIZE = 70
+
 
 
 def build_cnn(input_var=None, n=5):
@@ -64,7 +68,7 @@ def build_cnn(input_var=None, n=5):
         return block
 
     # Building the network
-    l_in = InputLayer(shape=(BATCH_SIZE, 1, 128, 128), input_var=input_var)
+    l_in = InputLayer(shape=(BATCH_SIZE, 2, 128, 128), input_var=input_var)
 
     # first layer, output is 16 x 128 x 128
     l = batch_norm(ConvLayer(l_in, num_filters=16, filter_size=(3,3), stride=(1,1), nonlinearity=rectify, pad='same', W=lasagne.init.HeNormal(gain='relu'), flip_filters=False))
@@ -138,10 +142,10 @@ pred_fn = theano.function([x_sym], prediction_test)
 
 from numpy import memmap
 
-train_pos_memmap = memmap("../data/patchClassification_train_pos.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["train_pos_shape"])
-train_neg_memmap = memmap("../data/patchClassification_train_neg.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["train_neg_shape"])
-val_pos_memmap = memmap("../data/patchClassification_val_pos.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["val_pos_shape"])
-val_neg_memmap = memmap("../data/patchClassification_val_neg.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["val_neg_shape"])
+train_pos_memmap = memmap("../data/%s_train_pos.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["train_pos_shape"])
+train_neg_memmap = memmap("../data/%s_train_neg.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["train_neg_shape"])
+val_pos_memmap = memmap("../data/%s_val_pos.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["val_pos_shape"])
+val_neg_memmap = memmap("../data/%s_val_neg.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["val_neg_shape"])
 
 
 all_training_losses = []
@@ -155,7 +159,7 @@ for epoch in range(n_epochs):
     train_acc_tmp = 0
     train_loss_tmp = 0
     batch_ctr = 0
-    for data, seg, labels in threaded_generator(memmapGeneratorDataAugm(train_neg_memmap, train_pos_memmap, BATCH_SIZE, n_pos_train, n_neg_train)):
+    for data, seg, labels in threaded_generator(memmapGeneratorDataAugm_t1km_flair(train_neg_memmap, train_pos_memmap, BATCH_SIZE, n_pos_train, n_neg_train)):
         if batch_ctr != 0 and batch_ctr % int(np.floor(n_batches_per_epoch/10.)) == 0:
             print "number of batches: ", batch_ctr, "/", n_batches_per_epoch
             print "training_loss since last update: ", train_loss_tmp/np.floor(n_batches_per_epoch/10.), " train accuracy: ", train_acc_tmp/np.floor(n_batches_per_epoch/10.)
@@ -178,7 +182,7 @@ for epoch in range(n_epochs):
     test_loss = 0
     accuracies = []
     valid_batch_ctr = 0
-    for data, seg, labels in threaded_generator(memmapGenerator(val_neg_memmap, val_pos_memmap, BATCH_SIZE, n_pos_val, n_neg_val)):
+    for data, seg, labels in threaded_generator(memmapGenerator_t1km_flair(val_neg_memmap, val_pos_memmap, BATCH_SIZE, n_pos_val, n_neg_val)):
         loss, acc = val_fn(data, labels)
         test_loss += loss
         accuracies.append(acc)
