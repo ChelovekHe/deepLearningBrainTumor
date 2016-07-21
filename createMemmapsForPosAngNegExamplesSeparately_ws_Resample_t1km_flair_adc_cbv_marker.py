@@ -19,12 +19,15 @@ PERCENT_VAL = 0.15 # expected percentage of positive samples
 expected_pos_to_neg_ratio = 10000./126964.
 expected_n_samples = 600000
 
-train_neg_shape = (expected_n_samples, 3, PATCH_SIZE, PATCH_SIZE)
-train_pos_shape = (int(expected_n_samples * expected_pos_to_neg_ratio), 3, PATCH_SIZE, PATCH_SIZE)
-val_neg_shape = (int(expected_n_samples * PERCENT_VAL), 3, PATCH_SIZE, PATCH_SIZE)
-val_pos_shape = (int(expected_n_samples * PERCENT_VAL * expected_pos_to_neg_ratio), 3, PATCH_SIZE, PATCH_SIZE)
+patient_markers = np.loadtxt("patient_markers.txt").astype(np.int32)
 
-memmap_name = "patchClassification_ws_resampled_t1km_flair"
+
+train_neg_shape = (expected_n_samples, 5 * PATCH_SIZE**2 + 3)
+train_pos_shape = (int(expected_n_samples * expected_pos_to_neg_ratio), 5 * PATCH_SIZE**2 + 3)
+val_neg_shape = (int(expected_n_samples * PERCENT_VAL), 5 * PATCH_SIZE**2 + 3)
+val_pos_shape = (int(expected_n_samples * PERCENT_VAL * expected_pos_to_neg_ratio), 5 * PATCH_SIZE**2 + 3)
+
+memmap_name = "patchClassification_ws_resampled_t1km_flair_adc_cbv_markers"
 
 train_neg_memmap = memmap("%s_train_neg.memmap" % memmap_name, dtype=np.float32, mode="w+", shape=train_neg_shape)
 train_pos_memmap = memmap("%s_train_pos.memmap" % memmap_name, dtype=np.float32, mode="w+", shape=train_pos_shape)
@@ -56,6 +59,7 @@ def correct_nans(image):
 
 val_dirs = ['001', '002', '004', '005', '006', '007', '008', '009', '011', '012', '013', '014', '015', '016']
 labels = []
+valid_patient_ids = []
 for curr_dir in subdirs:
     test = False
     if curr_dir in val_dirs:
@@ -73,10 +77,20 @@ for curr_dir in subdirs:
         continue
     if not os.path.isfile(os.path.join(curr_dir, "seg_necrosis_ce.nii.gz")):
         continue
+    if not os.path.isfile(os.path.join(curr_dir, "CBV_mutualinfo2_reg.nii.gz")):
+        continue
+    if not os.path.isfile(os.path.join(curr_dir, "ADC_mutualinfo2_reg.nii.gz")):
+        continue
+    if len(np.where(patient_markers == int(patient_id))[0]) == 0:
+        continue
+
+    valid_patient_ids.append(curr_dir)
 
     # load image
     itk_img = sitk.ReadImage(os.path.join(curr_dir, "T1KM_m2_bc_ws.nii.gz"))
     flair_img = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(curr_dir, "FLAIR_m2_bc_ws.nii.gz"))).astype(np.float)
+    adc_img = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(curr_dir, "ADC_mutualinfo2_reg.nii.gz"))).astype(np.float)
+    cbv_img = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(curr_dir, "CBV_mutualinfo2_reg.nii.gz"))).astype(np.float)
     seg_ce = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(curr_dir, "seg_ce.nii.gz"))).astype(np.float)
     seg_edema = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(curr_dir, "seg_edema.nii.gz"))).astype(np.float)
     seg_necrosis_ce = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(curr_dir, "seg_necrosis_ce.nii.gz"))).astype(np.float)
@@ -88,10 +102,14 @@ for curr_dir in subdirs:
     assert seg_necrosis_ce.shape == t1km_image.shape
     assert brain_mask.shape == t1km_image.shape
     assert flair_img.shape == t1km_image.shape
+    assert adc_img.shape == t1km_image.shape
+    assert cbv_img.shape == t1km_image.shape
 
     # correct nans
     t1km_image = correct_nans(t1km_image)
     flair_img = correct_nans(flair_img)
+    cbv_img = correct_nans(cbv_img)
+    adc_img = correct_nans(adc_img)
 
     spacing = np.array(itk_img.GetSpacing())[[2, 1, 0]]
     spacing_target = [1, 0.5, 0.5]
@@ -106,9 +124,14 @@ for curr_dir in subdirs:
 
     outside_value_t1km = t1km_image[0,0,0]
     outside_value_flair = flair_img[0,0,0]
-    pool = ThreadPool(6)
-    (t1km_image, flair_img, seg_ce, seg_edema, seg_necrosis_ce, brain_mask) = pool.map(resize_star, [(t1km_image, new_shape, 3, 'edge'),
+    outside_value_adc = adc_img[0,0,0] # not really necessary, outside is 0
+    outside_value_cbv = cbv_img[0,0,0] # not really necessary, outside is 0
+    pool = ThreadPool(8)
+    (t1km_image, flair_img, adc_img, cbv_img, seg_ce, seg_edema, seg_necrosis_ce, brain_mask) = pool.map(resize_star,
+                                                                                                    [(t1km_image, new_shape, 3, 'edge'),
                                                                                                      (flair_img, new_shape, 3, 'edge'),
+                                                                                                     (adc_img, new_shape, 3, 'edge'),
+                                                                                                     (cbv_img, new_shape, 3, 'edge'),
                                                                                                      (seg_ce, new_shape, 1, 'edge'),
                                                                                                      (seg_edema, new_shape, 1, 'edge'),
                                                                                                      (seg_necrosis_ce, new_shape, 1, 'edge'),
@@ -118,13 +141,18 @@ for curr_dir in subdirs:
 
     t1km_image = t1km_image.astype(np.float32)
     flair_img = flair_img.astype(np.float32)
+    adc_img = adc_img.astype(np.float32)
+    cbv_img = cbv_img.astype(np.float32)
     seg_ce = np.round(seg_ce).astype(np.int32)
     seg_edema = np.round(seg_edema).astype(np.int32)
     seg_necrosis_ce = np.round(seg_necrosis_ce).astype(np.int32)
     brain_mask = np.round(brain_mask).astype(np.int32)
 
+    # crisper borders after resample
     t1km_image[brain_mask == 0] = outside_value_t1km
     flair_img[brain_mask == 0] = outside_value_flair
+    adc_img[brain_mask == 0] = outside_value_adc
+    cbv_img[brain_mask == 0] = outside_value_cbv
     # outside_value = 0
     # t1_image -= outside_value
 
@@ -139,6 +167,8 @@ for curr_dir in subdirs:
     # images are brain extracted, they have some funky value everywhere outside of the brain region. we only want
     # slices with enough brain voxels. We can ensure that by counting background pixels
 
+    idx_in_patient_markers = np.where(patient_markers[:, 0] == int(patient_id))[0][0]
+
     # iterate over patches
     for z in xrange(t1km_image.shape[0]):
         y0 = 0
@@ -150,11 +180,11 @@ for curr_dir in subdirs:
                 # print "x0", x0
                 patch_t1km = t1km_image[z, x0:x0+PATCH_SIZE, y0:y0+PATCH_SIZE]
                 patch_flair = flair_img[z, x0:x0+PATCH_SIZE, y0:y0+PATCH_SIZE]
+                patch_adc = adc_img[z, x0:x0+PATCH_SIZE, y0:y0+PATCH_SIZE]
+                patch_cbv = cbv_img[z, x0:x0+PATCH_SIZE, y0:y0+PATCH_SIZE]
                 seg_patch = seg_combined[z, x0:x0+PATCH_SIZE, y0:y0+PATCH_SIZE]
                 brain_mask_patch = brain_mask[z, x0:x0+PATCH_SIZE, y0:y0+PATCH_SIZE]
-                patch_t1km = patch_t1km[np.newaxis, :, :]
-                patch_flair = patch_flair[np.newaxis, :, :]
-                seg_patch = seg_patch[np.newaxis, :, :]
+
                 # discard patch if more than 60% are background
                 if float(np.sum(brain_mask_patch))/float(voxels_in_patch) < 0.6:
                     x0 += PATCH_SIZE
@@ -176,25 +206,37 @@ for curr_dir in subdirs:
                 # test = np.random.rand() < PERCENT_VAL
                 if test:
                     if label == 0:
-                        val_neg_memmap[n_negative_val][0] = patch_t1km
-                        val_neg_memmap[n_negative_val][1] = patch_flair
-                        val_neg_memmap[n_negative_val][2] = seg_patch
+                        val_neg_memmap[n_negative_val][128**2 * 0:128**2 * 1] = patch_t1km.flatten()
+                        val_neg_memmap[n_negative_val][128**2 * 1:128**2 * 2] = patch_flair.flatten()
+                        val_neg_memmap[n_negative_val][128**2 * 2:128**2 * 3] = patch_adc.flatten()
+                        val_neg_memmap[n_negative_val][128**2 * 3:128**2 * 4] = patch_cbv.flatten()
+                        val_neg_memmap[n_negative_val][128**2 * 4:128**2 * 5] = seg_patch.flatten()
+                        val_neg_memmap[n_negative_val][-3:] = patient_markers[idx_in_patient_markers][1:]
                         n_negative_val += 1
                     elif label == 1:
-                        val_pos_memmap[n_positive_val][0] = patch_t1km
-                        val_pos_memmap[n_positive_val][1] = patch_flair
-                        val_pos_memmap[n_positive_val][2] = seg_patch
+                        val_pos_memmap[n_positive_val][128**2 * 0:128**2 * 1] = patch_t1km.flatten()
+                        val_pos_memmap[n_positive_val][128**2 * 1:128**2 * 2] = patch_flair.flatten()
+                        val_pos_memmap[n_positive_val][128**2 * 2:128**2 * 3] = patch_adc.flatten()
+                        val_pos_memmap[n_positive_val][128**2 * 3:128**2 * 4] = patch_cbv.flatten()
+                        val_pos_memmap[n_positive_val][128**2 * 4:128**2 * 5] = seg_patch.flatten()
+                        val_pos_memmap[n_positive_val][-3:] = patient_markers[idx_in_patient_markers][1:]
                         n_positive_val += 1
                 else:
                     if label == 0:
-                        train_neg_memmap[n_negative_train][0] = patch_t1km
-                        train_neg_memmap[n_negative_train][1] = patch_flair
-                        train_neg_memmap[n_negative_train][2] = seg_patch
+                        train_neg_memmap[n_negative_train][128**2 * 0:128**2 * 1] = patch_t1km.flatten()
+                        train_neg_memmap[n_negative_train][128**2 * 1:128**2 * 2] = patch_flair.flatten()
+                        train_neg_memmap[n_negative_train][128**2 * 2:128**2 * 3] = patch_adc.flatten()
+                        train_neg_memmap[n_negative_train][128**2 * 3:128**2 * 4] = patch_cbv.flatten()
+                        train_neg_memmap[n_negative_train][128**2 * 4:128**2 * 5] = seg_patch.flatten()
+                        train_neg_memmap[n_negative_train][-3:] = patient_markers[idx_in_patient_markers][1:]
                         n_negative_train += 1
                     if label == 1:
-                        train_pos_memmap[n_positive_train][0] = patch_t1km
-                        train_pos_memmap[n_positive_train][1] = patch_flair
-                        train_pos_memmap[n_positive_train][2] = seg_patch
+                        train_pos_memmap[n_positive_train][128**2 * 0:128**2 * 1] = patch_t1km.flatten()
+                        train_pos_memmap[n_positive_train][128**2 * 1:128**2 * 2] = patch_flair.flatten()
+                        train_pos_memmap[n_positive_train][128**2 * 2:128**2 * 3] = patch_adc.flatten()
+                        train_pos_memmap[n_positive_train][128**2 * 3:128**2 * 4] = patch_cbv.flatten()
+                        train_pos_memmap[n_positive_train][128**2 * 4:128**2 * 5] = seg_patch.flatten()
+                        train_pos_memmap[n_positive_train][-3:] = patient_markers[idx_in_patient_markers][1:]
                         n_positive_train += 1
                 # plt.imsave("%s.jpg" % str_id, patch, cmap="gray")
                 x0 += int(PATCH_SIZE / 5)

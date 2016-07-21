@@ -19,12 +19,12 @@ PERCENT_VAL = 0.15 # expected percentage of positive samples
 expected_pos_to_neg_ratio = 10000./126964.
 expected_n_samples = 600000
 
-train_neg_shape = (expected_n_samples, 3, PATCH_SIZE, PATCH_SIZE)
-train_pos_shape = (int(expected_n_samples * expected_pos_to_neg_ratio), 3, PATCH_SIZE, PATCH_SIZE)
-val_neg_shape = (int(expected_n_samples * PERCENT_VAL), 3, PATCH_SIZE, PATCH_SIZE)
-val_pos_shape = (int(expected_n_samples * PERCENT_VAL * expected_pos_to_neg_ratio), 3, PATCH_SIZE, PATCH_SIZE)
+train_neg_shape = (expected_n_samples, 5, PATCH_SIZE, PATCH_SIZE)
+train_pos_shape = (int(expected_n_samples * expected_pos_to_neg_ratio), 5, PATCH_SIZE, PATCH_SIZE)
+val_neg_shape = (int(expected_n_samples * PERCENT_VAL), 5, PATCH_SIZE, PATCH_SIZE)
+val_pos_shape = (int(expected_n_samples * PERCENT_VAL * expected_pos_to_neg_ratio), 5, PATCH_SIZE, PATCH_SIZE)
 
-memmap_name = "patchClassification_ws_resampled_t1km_flair"
+memmap_name = "patchClassification_ws_resampled_t1km_flair_adc_cbv"
 
 train_neg_memmap = memmap("%s_train_neg.memmap" % memmap_name, dtype=np.float32, mode="w+", shape=train_neg_shape)
 train_pos_memmap = memmap("%s_train_pos.memmap" % memmap_name, dtype=np.float32, mode="w+", shape=train_pos_shape)
@@ -73,10 +73,16 @@ for curr_dir in subdirs:
         continue
     if not os.path.isfile(os.path.join(curr_dir, "seg_necrosis_ce.nii.gz")):
         continue
+    if not os.path.isfile(os.path.join(curr_dir, "CBV_mutualinfo2_reg.nii.gz")):
+        continue
+    if not os.path.isfile(os.path.join(curr_dir, "ADC_mutualinfo2_reg.nii.gz")):
+        continue
 
     # load image
     itk_img = sitk.ReadImage(os.path.join(curr_dir, "T1KM_m2_bc_ws.nii.gz"))
     flair_img = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(curr_dir, "FLAIR_m2_bc_ws.nii.gz"))).astype(np.float)
+    adc_img = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(curr_dir, "ADC_mutualinfo2_reg.nii.gz"))).astype(np.float)
+    cbv_img = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(curr_dir, "CBV_mutualinfo2_reg.nii.gz"))).astype(np.float)
     seg_ce = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(curr_dir, "seg_ce.nii.gz"))).astype(np.float)
     seg_edema = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(curr_dir, "seg_edema.nii.gz"))).astype(np.float)
     seg_necrosis_ce = sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(curr_dir, "seg_necrosis_ce.nii.gz"))).astype(np.float)
@@ -88,10 +94,14 @@ for curr_dir in subdirs:
     assert seg_necrosis_ce.shape == t1km_image.shape
     assert brain_mask.shape == t1km_image.shape
     assert flair_img.shape == t1km_image.shape
+    assert adc_img.shape == t1km_image.shape
+    assert cbv_img.shape == t1km_image.shape
 
     # correct nans
     t1km_image = correct_nans(t1km_image)
     flair_img = correct_nans(flair_img)
+    cbv_img = correct_nans(cbv_img)
+    adc_img = correct_nans(adc_img)
 
     spacing = np.array(itk_img.GetSpacing())[[2, 1, 0]]
     spacing_target = [1, 0.5, 0.5]
@@ -106,9 +116,14 @@ for curr_dir in subdirs:
 
     outside_value_t1km = t1km_image[0,0,0]
     outside_value_flair = flair_img[0,0,0]
-    pool = ThreadPool(6)
-    (t1km_image, flair_img, seg_ce, seg_edema, seg_necrosis_ce, brain_mask) = pool.map(resize_star, [(t1km_image, new_shape, 3, 'edge'),
+    outside_value_adc = adc_img[0,0,0] # not really necessary, outside is 0
+    outside_value_cbv = cbv_img[0,0,0] # not really necessary, outside is 0
+    pool = ThreadPool(8)
+    (t1km_image, flair_img, adc_img, cbv_img, seg_ce, seg_edema, seg_necrosis_ce, brain_mask) = pool.map(resize_star,
+                                                                                                    [(t1km_image, new_shape, 3, 'edge'),
                                                                                                      (flair_img, new_shape, 3, 'edge'),
+                                                                                                     (adc_img, new_shape, 3, 'edge'),
+                                                                                                     (cbv_img, new_shape, 3, 'edge'),
                                                                                                      (seg_ce, new_shape, 1, 'edge'),
                                                                                                      (seg_edema, new_shape, 1, 'edge'),
                                                                                                      (seg_necrosis_ce, new_shape, 1, 'edge'),
@@ -118,6 +133,8 @@ for curr_dir in subdirs:
 
     t1km_image = t1km_image.astype(np.float32)
     flair_img = flair_img.astype(np.float32)
+    adc_img = adc_img.astype(np.float32)
+    cbv_img = cbv_img.astype(np.float32)
     seg_ce = np.round(seg_ce).astype(np.int32)
     seg_edema = np.round(seg_edema).astype(np.int32)
     seg_necrosis_ce = np.round(seg_necrosis_ce).astype(np.int32)
@@ -125,6 +142,8 @@ for curr_dir in subdirs:
 
     t1km_image[brain_mask == 0] = outside_value_t1km
     flair_img[brain_mask == 0] = outside_value_flair
+    adc_img[brain_mask == 0] = outside_value_adc
+    cbv_img[brain_mask == 0] = outside_value_cbv
     # outside_value = 0
     # t1_image -= outside_value
 
@@ -150,6 +169,8 @@ for curr_dir in subdirs:
                 # print "x0", x0
                 patch_t1km = t1km_image[z, x0:x0+PATCH_SIZE, y0:y0+PATCH_SIZE]
                 patch_flair = flair_img[z, x0:x0+PATCH_SIZE, y0:y0+PATCH_SIZE]
+                patch_adc = adc_img[z, x0:x0+PATCH_SIZE, y0:y0+PATCH_SIZE]
+                patch_cbv = cbv_img[z, x0:x0+PATCH_SIZE, y0:y0+PATCH_SIZE]
                 seg_patch = seg_combined[z, x0:x0+PATCH_SIZE, y0:y0+PATCH_SIZE]
                 brain_mask_patch = brain_mask[z, x0:x0+PATCH_SIZE, y0:y0+PATCH_SIZE]
                 patch_t1km = patch_t1km[np.newaxis, :, :]
@@ -178,23 +199,31 @@ for curr_dir in subdirs:
                     if label == 0:
                         val_neg_memmap[n_negative_val][0] = patch_t1km
                         val_neg_memmap[n_negative_val][1] = patch_flair
-                        val_neg_memmap[n_negative_val][2] = seg_patch
+                        val_neg_memmap[n_negative_val][2] = patch_adc
+                        val_neg_memmap[n_negative_val][3] = patch_cbv
+                        val_neg_memmap[n_negative_val][4] = seg_patch
                         n_negative_val += 1
                     elif label == 1:
                         val_pos_memmap[n_positive_val][0] = patch_t1km
                         val_pos_memmap[n_positive_val][1] = patch_flair
-                        val_pos_memmap[n_positive_val][2] = seg_patch
+                        val_pos_memmap[n_positive_val][2] = patch_adc
+                        val_pos_memmap[n_positive_val][3] = patch_cbv
+                        val_pos_memmap[n_positive_val][4] = seg_patch
                         n_positive_val += 1
                 else:
                     if label == 0:
                         train_neg_memmap[n_negative_train][0] = patch_t1km
                         train_neg_memmap[n_negative_train][1] = patch_flair
-                        train_neg_memmap[n_negative_train][2] = seg_patch
+                        train_neg_memmap[n_negative_train][2] = patch_adc
+                        train_neg_memmap[n_negative_train][3] = patch_cbv
+                        train_neg_memmap[n_negative_train][4] = seg_patch
                         n_negative_train += 1
                     if label == 1:
                         train_pos_memmap[n_positive_train][0] = patch_t1km
                         train_pos_memmap[n_positive_train][1] = patch_flair
-                        train_pos_memmap[n_positive_train][2] = seg_patch
+                        train_pos_memmap[n_positive_train][2] = patch_adc
+                        train_pos_memmap[n_positive_train][3] = patch_cbv
+                        train_pos_memmap[n_positive_train][4] = seg_patch
                         n_positive_train += 1
                 # plt.imsave("%s.jpg" % str_id, patch, cmap="gray")
                 x0 += int(PATCH_SIZE / 5)
@@ -214,7 +243,7 @@ my_dict = {
     "train_total" : n_negative_train + n_positive_train,
     "train_pos": n_positive_train,
     "train_neg": n_negative_train,
-    "val_total" : n_positive_val + n_negative_val,
+    "val_total": n_positive_val + n_negative_val,
     "val_pos": n_positive_val,
     "val_neg": n_negative_val,
     "train_neg_shape": train_neg_shape,

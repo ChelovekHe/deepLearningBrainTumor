@@ -47,6 +47,7 @@ img_mean = 0
 
 val_dirs = ['001', '002', '004', '005', '006', '007', '008', '009', '011', '012', '013', '014', '015', '016']
 labels = []
+valid_patient_ids = []
 for curr_dir in subdirs:
     test = False
     if curr_dir in val_dirs:
@@ -62,6 +63,7 @@ for curr_dir in subdirs:
         continue
     if not os.path.isfile(os.path.join(curr_dir, "seg_necrosis_ce.nii.gz")):
         continue
+    valid_patient_ids.append(curr_dir)
 
     # load image
     itk_img = sitk.ReadImage(os.path.join(curr_dir, "T1_m2_bc_ws.nii.gz"))
@@ -108,9 +110,9 @@ for curr_dir in subdirs:
     pool.join()
 
     t1_image = t1_image.astype(np.float32)
-    seg_ce = seg_ce.astype(np.int32)
-    seg_edema = seg_edema.astype(np.int32)
-    seg_necrosis_ce = seg_necrosis_ce.astype(np.int32)
+    seg_ce = np.round(seg_ce).astype(np.int32)
+    seg_edema = np.round(seg_edema).astype(np.int32)
+    seg_necrosis_ce = np.round(seg_necrosis_ce).astype(np.int32)
     brain_mask = np.round(brain_mask).astype(np.int32)
 
     t1_image[brain_mask == 0] = outside_value

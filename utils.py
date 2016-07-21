@@ -2,7 +2,8 @@ __author__ = 'fabian'
 import numpy as np
 import matplotlib.pyplot as plt
 import lasagne
-from memmap_negPos_batchgen import memmapGenerator
+from memmap_negPos_batchgen import memmapGenerator, memmapGenerator_t1km_flair
+from memmap_negPos_batchgen import memmapGenerator_t1km_flair_adc_cbv, memmapGenerator_t1km_flair_adc_cbv_markers
 from numpy import memmap
 import cPickle
 
@@ -86,16 +87,17 @@ def validate_result(img, convLayer):
     plt.close()
 
 def plot_some_data():
-    with open("../data/patchClassification_ws_resampled_properties.pkl", 'r') as f:
+    memmap_name = "patchClassification_ws_resampled"
+    with open("../data/%s_properties.pkl" % memmap_name, 'r') as f:
         memmap_properties = cPickle.load(f)
     n_pos_train = memmap_properties["train_pos"]
     n_neg_train = memmap_properties["train_neg"]
     n_pos_val = memmap_properties["val_pos"]
     n_neg_val = memmap_properties["val_neg"]
-    train_pos_memmap = memmap("../data/patchClassification_ws_resampled_train_pos.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["train_pos_shape"])
-    train_neg_memmap = memmap("../data/patchClassification_ws_resampled_train_neg.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["train_neg_shape"])
-    val_pos_memmap = memmap("../data/patchClassification_ws_resampled_val_pos.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["val_pos_shape"])
-    val_neg_memmap = memmap("../data/patchClassification_ws_resampled_val_neg.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["val_neg_shape"])
+    train_pos_memmap = memmap("../data/%s_train_pos.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["train_pos_shape"])
+    train_neg_memmap = memmap("../data/%s_train_neg.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["train_neg_shape"])
+    val_pos_memmap = memmap("../data/%s_val_pos.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["val_pos_shape"])
+    val_neg_memmap = memmap("../data/%s_val_neg.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["val_neg_shape"])
     i = 0
     ctr = 0
     for data, seg, labels in memmapGenerator(val_neg_memmap, val_pos_memmap, 128, n_pos_val, n_neg_val):
@@ -120,6 +122,93 @@ def plot_some_data():
             plt.close()
             ctr += 1
         i += 1
+
+def plot_some_data_t1km_flair():
+    memmap_name = "patchClassification_ws_resampled_t1km_flair_new"
+    with open("../data/%s_properties.pkl" % memmap_name, 'r') as f:
+        memmap_properties = cPickle.load(f)
+    n_pos_train = memmap_properties["train_pos"]
+    n_neg_train = memmap_properties["train_neg"]
+    n_pos_val = memmap_properties["val_pos"]
+    n_neg_val = memmap_properties["val_neg"]
+    train_pos_memmap = memmap("../data/%s_train_pos.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["train_pos_shape"])
+    train_neg_memmap = memmap("../data/%s_train_neg.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["train_neg_shape"])
+    val_pos_memmap = memmap("../data/%s_val_pos.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["val_pos_shape"])
+    val_neg_memmap = memmap("../data/%s_val_neg.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["val_neg_shape"])
+    i = 0
+    ctr = 0
+    for data, seg, labels in memmapGenerator_t1km_flair(val_neg_memmap, val_pos_memmap, 128, n_pos_val, n_neg_val):
+        if i == 2:
+            break
+        data2 = np.array(data)
+        for img, segm, lab in zip(data2, seg, labels):
+            t1km_img = img[0]
+            flair_img = img[1]
+            plt.figure(figsize=(24,8))
+            plt.subplot(1, 3, 1)
+            plt.imshow(t1km_img, interpolation='nearest', cmap="gray")
+            if lab == 0:
+                color = 'green'
+            else:
+                color = 'red'
+            plt.text(0, 0, lab, color=color, bbox=dict(facecolor='white', alpha=1))
+
+            plt.subplot(1, 3, 2)
+            plt.imshow(flair_img, interpolation='nearest', cmap="gray")
+            plt.subplot(1, 3, 3)
+            plt.imshow(segm[0], cmap="jet")
+            plt.savefig("../some_images/img_%04.0f.png"%ctr)
+            plt.close()
+            ctr += 1
+        i += 1
+
+
+def plot_some_data_t1km_flair_adc_cbv():
+    memmap_name = "patchClassification_ws_resampled_t1km_flair_adc_cbv_new"
+    with open("../data/%s_properties.pkl" % memmap_name, 'r') as f:
+        memmap_properties = cPickle.load(f)
+    n_pos_train = memmap_properties["train_pos"]
+    n_neg_train = memmap_properties["train_neg"]
+    n_pos_val = memmap_properties["val_pos"]
+    n_neg_val = memmap_properties["val_neg"]
+    train_pos_memmap = memmap("../data/%s_train_pos.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["train_pos_shape"])
+    train_neg_memmap = memmap("../data/%s_train_neg.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["train_neg_shape"])
+    val_pos_memmap = memmap("../data/%s_val_pos.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["val_pos_shape"])
+    val_neg_memmap = memmap("../data/%s_val_neg.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["val_neg_shape"])
+    i = 0
+    ctr = 0
+    for data, seg, labels in memmapGenerator_t1km_flair_adc_cbv(val_neg_memmap, val_pos_memmap, 128, n_pos_val, n_neg_val):
+        if i == 2:
+            break
+        data2 = np.array(data)
+        for img, segm, lab in zip(data2, seg, labels):
+            t1km_img = img[0]
+            flair_img = img[1]
+            adc_img = img[2]
+            cbv_img = img[3]
+            plt.figure(figsize=(24,8))
+            plt.subplot(1, 5, 1)
+            plt.imshow(t1km_img, interpolation='nearest', cmap="gray")
+            if lab == 0:
+                color = 'green'
+            else:
+                color = 'red'
+            plt.text(0, 0, lab, color=color, bbox=dict(facecolor='white', alpha=1))
+
+            plt.subplot(1, 5, 2)
+            plt.imshow(flair_img, interpolation='nearest', cmap="gray")
+            plt.subplot(1, 5, 3)
+            plt.imshow(adc_img, interpolation='nearest', cmap="gray")
+            plt.subplot(1, 5, 4)
+            plt.imshow(cbv_img, interpolation='nearest', cmap="gray")
+            plt.subplot(1, 5, 5)
+            plt.imshow(segm[0], cmap="jet")
+            plt.savefig("../some_images/img_%04.0f.png"%ctr)
+            plt.close()
+            ctr += 1
+        i += 1
+
+
 
 
 def plot_layer_weights(layer):
