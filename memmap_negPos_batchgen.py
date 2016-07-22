@@ -28,7 +28,6 @@ def memmapGenerator(array_neg, array_pos, BATCH_SIZE, n_elements_pos=None, n_ele
         labels[len(idx_pos):] = 0
         yield data[idx_for_shuffle], seg[idx_for_shuffle], labels[idx_for_shuffle]
 
-
 def memmapGeneratorDataAugm(array_neg, array_pos, BATCH_SIZE, n_elements_pos=None, n_elements_neg=None):
     while True:
         if n_elements_pos is None:
@@ -263,14 +262,14 @@ def memmapGeneratorDataAugm_t1km_flair_adc_cbv_markers(array_neg, array_pos, BAT
         np.random.shuffle(idx_for_shuffle)
         pos_data = np.array(array_pos[idx_pos])
         neg_data = np.array(array_neg[idx_neg])
-        data[:len(idx_pos)][0] = pos_data[:, 128**2 * 0 : 128**2 * 1].reshape(len(idx_pos), 1, 128, 128).astype(np.float32)
-        data[len(idx_pos):][0] = neg_data[:, 128**2 * 0 : 128**2 * 1].reshape(len(idx_neg), 1, 128, 128).astype(np.float32)
-        data[:len(idx_pos)][1] = pos_data[:, 128**2 * 1 : 128**2 * 2].reshape(len(idx_pos), 1, 128, 128).astype(np.float32)
-        data[len(idx_pos):][1] = neg_data[:, 128**2 * 1 : 128**2 * 2].reshape(len(idx_neg), 1, 128, 128).astype(np.float32)
-        data[:len(idx_pos)][2] = pos_data[:, 128**2 * 2 : 128**2 * 3].reshape(len(idx_pos), 1, 128, 128).astype(np.float32)
-        data[len(idx_pos):][2] = neg_data[:, 128**2 * 2 : 128**2 * 3].reshape(len(idx_neg), 1, 128, 128).astype(np.float32)
-        data[:len(idx_pos)][3] = pos_data[:, 128**2 * 3 : 128**2 * 4].reshape(len(idx_pos), 1, 128, 128).astype(np.float32)
-        data[len(idx_pos):][3] = neg_data[:, 128**2 * 3 : 128**2 * 4].reshape(len(idx_neg), 1, 128, 128).astype(np.float32)
+        data[:len(idx_pos)][:, 0] = pos_data[:, 128**2 * 0 : 128**2 * 1].reshape(len(idx_pos), 128, 128).astype(np.float32)
+        data[len(idx_pos):][:, 0] = neg_data[:, 128**2 * 0 : 128**2 * 1].reshape(len(idx_neg), 128, 128).astype(np.float32)
+        data[:len(idx_pos)][:, 1] = pos_data[:, 128**2 * 1 : 128**2 * 2].reshape(len(idx_pos), 128, 128).astype(np.float32)
+        data[len(idx_pos):][:, 1] = neg_data[:, 128**2 * 1 : 128**2 * 2].reshape(len(idx_neg), 128, 128).astype(np.float32)
+        data[:len(idx_pos)][:, 2] = pos_data[:, 128**2 * 2 : 128**2 * 3].reshape(len(idx_pos), 128, 128).astype(np.float32)
+        data[len(idx_pos):][:, 2] = neg_data[:, 128**2 * 2 : 128**2 * 3].reshape(len(idx_neg), 128, 128).astype(np.float32)
+        data[:len(idx_pos)][:, 3] = pos_data[:, 128**2 * 3 : 128**2 * 4].reshape(len(idx_pos), 128, 128).astype(np.float32)
+        data[len(idx_pos):][:, 3] = neg_data[:, 128**2 * 3 : 128**2 * 4].reshape(len(idx_neg), 128, 128).astype(np.float32)
         seg[:len(idx_pos)] = pos_data[:, 128**2 * 4 : 128**2 * 5].reshape(len(idx_pos), 1, 128, 128).astype(np.int32)
         seg[len(idx_pos):] = neg_data[:, 128**2 * 4 : 128**2 * 5].reshape(len(idx_neg), 1, 128, 128).astype(np.int32)
         markers[:len(idx_pos)] = pos_data[:, -3:]
@@ -304,14 +303,14 @@ def memmapGenerator_t1km_flair_adc_cbv_markers(array_neg, array_pos, BATCH_SIZE,
         np.random.shuffle(idx_for_shuffle)
         pos_data = np.array(array_pos[idx_pos])
         neg_data = np.array(array_neg[idx_neg])
-        data[:len(idx_pos)][0] = pos_data[:, 128**2 * 0 : 128**2 * 1].reshape(len(idx_pos), 1, 128, 128).astype(np.float32)
-        data[len(idx_pos):][0] = neg_data[:, 128**2 * 0 : 128**2 * 1].reshape(len(idx_neg), 1, 128, 128).astype(np.float32)
-        data[:len(idx_pos)][1] = pos_data[:, 128**2 * 1 : 128**2 * 2].reshape(len(idx_pos), 1, 128, 128).astype(np.float32)
-        data[len(idx_pos):][1] = neg_data[:, 128**2 * 1 : 128**2 * 2].reshape(len(idx_neg), 1, 128, 128).astype(np.float32)
-        data[:len(idx_pos)][2] = pos_data[:, 128**2 * 2 : 128**2 * 3].reshape(len(idx_pos), 1, 128, 128).astype(np.float32)
-        data[len(idx_pos):][2] = neg_data[:, 128**2 * 2 : 128**2 * 3].reshape(len(idx_neg), 1, 128, 128).astype(np.float32)
-        data[:len(idx_pos)][3] = pos_data[:, 128**2 * 3 : 128**2 * 4].reshape(len(idx_pos), 1, 128, 128).astype(np.float32)
-        data[len(idx_pos):][3] = neg_data[:, 128**2 * 3 : 128**2 * 4].reshape(len(idx_neg), 1, 128, 128).astype(np.float32)
+        data[:len(idx_pos)][:, 0] = pos_data[:, 128**2 * 0 : 128**2 * 1].reshape(len(idx_pos), 128, 128).astype(np.float32)
+        data[len(idx_pos):][:, 0] = neg_data[:, 128**2 * 0 : 128**2 * 1].reshape(len(idx_neg), 128, 128).astype(np.float32)
+        data[:len(idx_pos)][:, 1] = pos_data[:, 128**2 * 1 : 128**2 * 2].reshape(len(idx_pos), 128, 128).astype(np.float32)
+        data[len(idx_pos):][:, 1] = neg_data[:, 128**2 * 1 : 128**2 * 2].reshape(len(idx_neg), 128, 128).astype(np.float32)
+        data[:len(idx_pos)][:, 2] = pos_data[:, 128**2 * 2 : 128**2 * 3].reshape(len(idx_pos), 128, 128).astype(np.float32)
+        data[len(idx_pos):][:, 2] = neg_data[:, 128**2 * 2 : 128**2 * 3].reshape(len(idx_neg), 128, 128).astype(np.float32)
+        data[:len(idx_pos)][:, 3] = pos_data[:, 128**2 * 3 : 128**2 * 4].reshape(len(idx_pos), 128, 128).astype(np.float32)
+        data[len(idx_pos):][:, 3] = neg_data[:, 128**2 * 3 : 128**2 * 4].reshape(len(idx_neg), 128, 128).astype(np.float32)
         seg[:len(idx_pos)] = pos_data[:, 128**2 * 4 : 128**2 * 5].reshape(len(idx_pos), 1, 128, 128).astype(np.int32)
         seg[len(idx_pos):] = neg_data[:, 128**2 * 4 : 128**2 * 5].reshape(len(idx_neg), 1, 128, 128).astype(np.int32)
         markers[:len(idx_pos)] = pos_data[:, -3:]
