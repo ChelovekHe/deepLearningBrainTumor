@@ -3,12 +3,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 import lasagne
 from memmap_negPos_batchgen import memmapGenerator, memmapGenerator_t1km_flair
-from memmap_negPos_batchgen import memmapGenerator_t1km_flair_adc_cbv, memmapGenerator_t1km_flair_adc_cbv_markers
+from memmap_negPos_batchgen import memmapGenerator_t1km_flair_adc_cbv, memmapGenerator_t1km_flair_adc_cbv_markers, memmapGenerator_tumorClassRot
 from numpy import memmap
 import cPickle
+from multiprocessing import Process
+from multiprocessing import Queue as MPQueue
 
 def threaded_generator(generator, num_cached=10):
-    # this code is writte by jan Schluter
+    # this code is written by jan Schluter
     # copied from https://github.com/benanne/Lasagne/issues/12
     import Queue
     queue = Queue.Queue(maxsize=num_cached)
@@ -32,7 +34,6 @@ def threaded_generator(generator, num_cached=10):
         yield item
         queue.task_done()
         item = queue.get()
-
 
 def printLosses(all_training_losses, all_training_accs, all_validation_losses, all_valid_accur, fname, samplesPerEpoch=10):
     fig, ax1 = plt.subplots()
@@ -209,6 +210,46 @@ def plot_some_data_t1km_flair_adc_cbv():
         i += 1
 
 
+def plot_some_data_varNumChannels(memmap_gen = memmapGenerator_tumorClassRot):
+    memmap_name = "patchClassification_ws_resampled_t1km_flair_adc_cbv_new"
+    with open("../data/%s_properties.pkl" % memmap_name, 'r') as f:
+        memmap_properties = cPickle.load(f)
+    n_pos_train = memmap_properties["train_pos"]
+    n_neg_train = memmap_properties["train_neg"]
+    n_pos_val = memmap_properties["val_pos"]
+    n_neg_val = memmap_properties["val_neg"]
+    train_pos_memmap = memmap("../data/%s_train_pos.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["train_pos_shape"])
+    train_neg_memmap = memmap("../data/%s_train_neg.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["train_neg_shape"])
+    val_pos_memmap = memmap("../data/%s_val_pos.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["val_pos_shape"])
+    val_neg_memmap = memmap("../data/%s_val_neg.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["val_neg_shape"])
+    i = 0
+    ctr = 0
+    for data, seg, labels in memmap_gen(val_neg_memmap, val_pos_memmap, 128, n_pos_val, n_neg_val):
+        if i == 2:
+            break
+        data2 = np.array(data)
+        for img, segm, lab in zip(data2, seg, labels):
+            num_subplots = img.shape[0] + segm.shape[0]
+            subplot_ctr = 1
+            plt.figure(figsize=(12, 12))
+            for x in xrange(img.shape[0]):
+                plt.subplot(int(np.ceil(num_subplots**0.5)), int(np.ceil(num_subplots**0.5)), subplot_ctr)
+                plt.imshow(img[x], interpolation='nearest', cmap="gray")
+                if x == 0:
+                    if lab == 0:
+                        color = 'green'
+                    else:
+                        color = 'red'
+                    plt.text(0, 0, lab, color=color, bbox=dict(facecolor='white', alpha=1))
+                subplot_ctr += 1
+            for x in xrange(segm.shape[0]):
+                plt.subplot(int(np.ceil(num_subplots**0.5)), int(np.ceil(num_subplots**0.5)), subplot_ctr)
+                plt.imshow(segm[x], interpolation='nearest', cmap="gray")
+                subplot_ctr += 1
+            plt.savefig("../some_images/img_%04.0f.png"%ctr)
+            plt.close()
+            ctr += 1
+        i += 1
 
 
 def plot_layer_weights(layer):
@@ -356,3 +397,33 @@ def rand_rotation_matrix(deflection=1.0, randnums=None):
 
     M = (np.outer(V, V) - np.eye(3)).dot(R)
     return M
+
+def create_matrix_rotation_x(angle, matrix = None):
+    rotation_x = np.array([[1,              0,              0],
+                           [0,              np.cos(angle),  -np.sin(angle)],
+                           [0,              np.sin(angle),  np.cos(angle)]])
+    if matrix is None:
+        return rotation_x
+
+    return np.dot(matrix, rotation_x)
+
+def create_matrix_rotation_y(angle, matrix = None):
+    rotation_y = np.array([[np.cos(angle),  0,              np.sin(angle)],
+                           [0,              1,              0],
+                           [-np.sin(angle), 0,              np.cos(angle)]])
+    if matrix is None:
+        return rotation_y
+
+    return np.dot(matrix, rotation_y)
+
+def create_matrix_rotation_z(angle, matrix = None):
+    rotation_z = np.array([[np.cos(angle),  -np.sin(angle), 0],
+                           [np.sin(angle),  np.cos(angle),  0],
+                           [0,              0,              1]])
+    if matrix is None:
+        return rotation_z
+
+    return np.dot(matrix, rotation_z)
+
+def create_random_rotation():
+    return create_matrix_rotation_x(np.random.uniform(0.0, 2*np.pi), create_matrix_rotation_y(np.random.uniform(0.0, 2*np.pi), create_matrix_rotation_z(np.random.uniform(0.0, 2*np.pi))))

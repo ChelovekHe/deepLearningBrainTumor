@@ -6,6 +6,7 @@ from numpy import memmap
 
 
 def memmapGenerator(array_neg, array_pos, BATCH_SIZE, n_elements_pos=None, n_elements_neg=None):
+    np.random.seed()
     while True:
         if n_elements_pos is None:
             n_elements_pos = array_pos.shape[0]
@@ -29,6 +30,7 @@ def memmapGenerator(array_neg, array_pos, BATCH_SIZE, n_elements_pos=None, n_ele
         yield data[idx_for_shuffle], seg[idx_for_shuffle], labels[idx_for_shuffle]
 
 def memmapGeneratorDataAugm(array_neg, array_pos, BATCH_SIZE, n_elements_pos=None, n_elements_neg=None):
+    np.random.seed()
     while True:
         if n_elements_pos is None:
             n_elements_pos = array_pos.shape[0]
@@ -76,6 +78,7 @@ def loadPatientMemmaps(folder = "/home/fabian/datasets/Hirntumor_von_David/exper
 
 # super slow. this is not going to be practical...
 def generate_batches_patientMemmaps_dataAugm_t1km_flair(all_patients_dict, BATCH_SIZE=50, PATCH_SIZE=128):
+    np.random.seed()
     patient_ids = all_patients_dict.keys()
     while True:
         data = np.zeros((BATCH_SIZE, 2, PATCH_SIZE, PATCH_SIZE), dtype=np.float32)
@@ -132,6 +135,7 @@ def generate_batches_patientMemmaps_dataAugm_t1km_flair(all_patients_dict, BATCH
 
 
 def memmapGenerator_t1km_flair(array_neg, array_pos, BATCH_SIZE, n_elements_pos=None, n_elements_neg=None):
+    np.random.seed()
     while True:
         if n_elements_pos is None:
             n_elements_pos = array_pos.shape[0]
@@ -156,6 +160,7 @@ def memmapGenerator_t1km_flair(array_neg, array_pos, BATCH_SIZE, n_elements_pos=
 
 
 def memmapGeneratorDataAugm_t1km_flair(array_neg, array_pos, BATCH_SIZE, n_elements_pos=None, n_elements_neg=None):
+    np.random.seed()
     while True:
         if n_elements_pos is None:
             n_elements_pos = array_pos.shape[0]
@@ -188,6 +193,7 @@ def memmapGeneratorDataAugm_t1km_flair(array_neg, array_pos, BATCH_SIZE, n_eleme
 
 
 def memmapGeneratorDataAugm_t1km_flair_adc_cbv(array_neg, array_pos, BATCH_SIZE, n_elements_pos=None, n_elements_neg=None):
+    np.random.seed()
     while True:
         if n_elements_pos is None:
             n_elements_pos = array_pos.shape[0]
@@ -220,6 +226,7 @@ def memmapGeneratorDataAugm_t1km_flair_adc_cbv(array_neg, array_pos, BATCH_SIZE,
 
 
 def memmapGenerator_t1km_flair_adc_cbv(array_neg, array_pos, BATCH_SIZE, n_elements_pos=None, n_elements_neg=None):
+    np.random.seed()
     while True:
         if n_elements_pos is None:
             n_elements_pos = array_pos.shape[0]
@@ -245,8 +252,36 @@ def memmapGenerator_t1km_flair_adc_cbv(array_neg, array_pos, BATCH_SIZE, n_eleme
         labels = labels[idx_for_shuffle]
         yield data, seg, labels
 
+def memmapGenerator_tumorClassRot(array_neg, array_pos, BATCH_SIZE, n_elements_pos=None, n_elements_neg=None):
+    np.random.seed()
+    while True:
+        if n_elements_pos is None:
+            n_elements_pos = array_pos.shape[0]
+        if n_elements_neg is None:
+            n_elements_neg = array_neg.shape[0]
+        idx_pos = np.random.choice(n_elements_pos, int(BATCH_SIZE/2.))
+        idx_neg = np.random.choice(n_elements_neg, int(BATCH_SIZE/2.))
+        data = np.zeros((len(idx_pos)+len(idx_neg), 15, 128, 128), dtype=np.float32)
+        seg = np.zeros((len(idx_pos)+len(idx_neg), 3, 128, 128), dtype=np.int32)
+        labels = np.zeros(len(idx_pos)+len(idx_neg), dtype=np.int32)
+        idx_for_shuffle = np.arange(len(idx_neg)+len(idx_neg))
+        np.random.shuffle(idx_for_shuffle)
+        pos_data = np.array(array_pos[idx_pos])
+        neg_data = np.array(array_neg[idx_neg])
+        data[:len(idx_pos)] = pos_data[:, :15].astype(np.float32)
+        data[len(idx_pos):] = neg_data[:, :15].astype(np.float32)
+        seg[:len(idx_pos)][:, :, :, :] = pos_data[:, 15:].astype(np.int32)
+        seg[len(idx_pos):][:, :, :, :] = neg_data[:, 15:].astype(np.int32)
+        labels[:len(idx_pos)] = 1
+        labels[len(idx_pos):] = 0
+        data = data[idx_for_shuffle]
+        seg = seg[idx_for_shuffle]
+        labels = labels[idx_for_shuffle]
+        yield data, seg, labels
+
 
 def memmapGeneratorDataAugm_t1km_flair_adc_cbv_markers(array_neg, array_pos, BATCH_SIZE, n_elements_pos=None, n_elements_neg=None):
+    np.random.seed()
     while True:
         if n_elements_pos is None:
             n_elements_pos = array_pos.shape[0]
@@ -288,6 +323,7 @@ def memmapGeneratorDataAugm_t1km_flair_adc_cbv_markers(array_neg, array_pos, BAT
 
 
 def memmapGenerator_t1km_flair_adc_cbv_markers(array_neg, array_pos, BATCH_SIZE, n_elements_pos=None, n_elements_neg=None):
+    np.random.seed()
     while True:
         if n_elements_pos is None:
             n_elements_pos = array_pos.shape[0]
@@ -321,3 +357,4 @@ def memmapGenerator_t1km_flair_adc_cbv_markers(array_neg, array_pos, BATCH_SIZE,
         seg = seg[idx_for_shuffle]
         labels = labels[idx_for_shuffle]
         yield data, seg, labels, markers
+

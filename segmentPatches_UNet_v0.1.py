@@ -1,5 +1,3 @@
-# now using residual learning
-
 __author__ = 'fabian'
 import theano
 import lasagne
@@ -16,13 +14,13 @@ from collections import OrderedDict
 import sys
 import lmdb
 from utils import threaded_generator, printLosses, validate_result, plot_layer_weights
-from memmap_negPos_batchgen import memmapGenerator, memmapGeneratorDataAugm, memmapGenerator_t1km_flair, memmapGeneratorDataAugm_t1km_flair
+from memmap_negPos_batchgen import memmapGenerator, memmapGeneratorDataAugm, memmapGenerator_t1km_flair, memmapGeneratorDataAugm_t1km_flair, memmapGeneratorDataAugm_t1km_flair_adc_cbv, memmapGenerator_t1km_flair_adc_cbv
 import cPickle
 from lasagne.layers import batch_norm
 
 
-EXPERIMENT_NAME = "classifyPatches_memmap_v0.7_ws_resample_neu_t1km_flair"
-memmap_name = "patchClassification_ws_resampled_t1km_flair"
+EXPERIMENT_NAME = "classifyPatches_memmap_v0.7_ws_resample_t1km_flair_adc_cbv_new"
+memmap_name = "patchClassification_ws_resampled_t1km_flair_adc_cbv_new"
 BATCH_SIZE = 70
 
 with open("../data/%s_properties.pkl" % memmap_name, 'r') as f:
@@ -35,75 +33,54 @@ n_training_samples = memmap_properties["train_total"]
 n_val_samples = memmap_properties["val_total"]
 
 
+def build_UNet():
+    net = OrderedDict()
+    net['input'] = InputLayer((BATCH_SIZE, 1, 128, 128))
+
+    net['contr_1_1'] = batch_norm(ConvLayer(net['input'], 64, 3, nonlinearity=lasagne.nonlinearities.elu))
+    net['contr_1_2'] = batch_norm(ConvLayer(net['contr_1_1'], 64, 3, nonlinearity=lasagne.nonlinearities.elu))
+    net['pool1'] = Pool2DLayer(net['contr_1_2'], 2)
+
+    net['contr_2_1'] = batch_norm(ConvLayer(net['pool1'], 128, 3, nonlinearity=lasagne.nonlinearities.elu))
+    net['contr_2_2'] = batch_norm(ConvLayer(net['contr_2_1'], 128, 3, nonlinearity=lasagne.nonlinearities.elu))
+    net['pool2'] = Pool2DLayer(net['contr_2_2'], 2)
+
+    net['contr_3_1'] = batch_norm(ConvLayer(net['pool2'], 256, 3, nonlinearity=lasagne.nonlinearities.elu))
+    net['contr_3_2'] = batch_norm(ConvLayer(net['contr_3_1'], 256, 3, nonlinearity=lasagne.nonlinearities.elu))
+    net['pool3'] = Pool2DLayer(net['contr_3_2'], 2)
+
+    net['contr_4_1'] = batch_norm(ConvLayer(net['pool3'], 512, 3, nonlinearity=lasagne.nonlinearities.elu))
+    net['contr_4_2'] = batch_norm(ConvLayer(net['contr_4_1'], 512, 3, nonlinearity=lasagne.nonlinearities.elu))
+    net['pool4'] = Pool2DLayer(net['contr_4_2'], 2)
+
+    net['contr_5_1'] = batch_norm(ConvLayer(net['pool4'], 1024, 3, nonlinearity=lasagne.nonlinearities.elu))
+    net['contr_5_2'] = batch_norm(ConvLayer(net['contr_5_1'], 1024, 3, nonlinearity=lasagne.nonlinearities.elu))
+    net['deconv1'] = Deconv2DLayer(net['contr_5_2'], 512, 2)
+
+    net['concat1'] = ConcatLayer([net['deconv1'], net['contr_4_2']], cropping='center')
+    net['expand_1_1'] = batch_norm(ConvLayer(net['concat1'], 512, 3, nonlinearity=lasagne.nonlinearities.elu))
+    net['expand_1_2'] = batch_norm(ConvLayer(net['expand_1_1'], 512, 3, nonlinearity=lasagne.nonlinearities.elu))
+    net['deconv2'] = Deconv2DLayer(net['expand_1_2'], 256, 2)
+
+    net['concat2'] = ConcatLayer([net['deconv2'], net['contr_3_2']], cropping='center')
+    net['expand_2_1'] = batch_norm(ConvLayer(net['concat2'], 256, 3, nonlinearity=lasagne.nonlinearities.elu))
+    net['expand_2_2'] = batch_norm(ConvLayer(net['expand_2_1'], 256, 3, nonlinearity=lasagne.nonlinearities.elu))
+    net['deconv3'] = Deconv2DLayer(net['expand_2_2'], 128, 2)
+
+    net['concat3'] = ConcatLayer([net['deconv3'], net['contr_2_2']], cropping='center')
+    net['expand_3_1'] = batch_norm(ConvLayer(net['concat3'], 128, 3, nonlinearity=lasagne.nonlinearities.elu))
+    net['expand_3_2'] = batch_norm(ConvLayer(net['expand_3_1'], 128, 3, nonlinearity=lasagne.nonlinearities.elu))
+    net['deconv4'] = Deconv2DLayer(net['expand_3_2'], 64, 2)
+
+    net['concat4'] = ConcatLayer([net['deconv4'], net['contr_1_2']], cropping='center')
+    net['expand_4_1'] = batch_norm(ConvLayer(net['concat4'], 64, 3, nonlinearity=lasagne.nonlinearities.elu))
+    net['expand_4_2'] = batch_norm(ConvLayer(net['expand_4_1'], 64, 3, nonlinearity=lasagne.nonlinearities.elu))
+
+    net['segLayer'] = ConvLayer(net['expand_4_2'], 2, 1, nonlinearity=lasagne.nonlinearities.softmax)
+    return net
 
 
-def build_cnn(input_var=None, n=5):
-    # create a residual learning building block with two stacked 3x3 convlayers as in paper
-    def residual_block(l, increase_dim=False, projection=False):
-        input_num_filters = l.output_shape[1]
-        if increase_dim:
-            first_stride = (2,2)
-            out_num_filters = input_num_filters*2
-        else:
-            first_stride = (1,1)
-            out_num_filters = input_num_filters
-
-        stack_1 = batch_norm(ConvLayer(l, num_filters=out_num_filters, filter_size=(3,3), stride=first_stride, nonlinearity=rectify, pad='same', W=lasagne.init.HeNormal(gain='relu'), flip_filters=False))
-        stack_2 = batch_norm(ConvLayer(stack_1, num_filters=out_num_filters, filter_size=(3,3), stride=(1,1), nonlinearity=None, pad='same', W=lasagne.init.HeNormal(gain='relu'), flip_filters=False))
-
-        # add shortcut connections
-        if increase_dim:
-            if projection:
-                # projection shortcut, as option B in paper
-                projection = batch_norm(ConvLayer(l, num_filters=out_num_filters, filter_size=(1,1), stride=(2,2), nonlinearity=None, pad='same', b=None, flip_filters=False))
-                block = NonlinearityLayer(ElemwiseSumLayer([stack_2, projection]),nonlinearity=rectify)
-            else:
-                # identity shortcut, as option A in paper
-                identity = ExpressionLayer(l, lambda X: X[:, :, ::2, ::2], lambda s: (s[0], s[1], s[2]//2, s[3]//2))
-                padding = PadLayer(identity, [out_num_filters//4,0,0], batch_ndim=1)
-                block = NonlinearityLayer(ElemwiseSumLayer([stack_2, padding]),nonlinearity=rectify)
-        else:
-            block = NonlinearityLayer(ElemwiseSumLayer([stack_2, l]),nonlinearity=rectify)
-
-        return block
-
-    # Building the network
-    l_in = InputLayer(shape=(BATCH_SIZE, 2, 128, 128), input_var=input_var)
-
-    # first layer, output is 16 x 128 x 128
-    l = batch_norm(ConvLayer(l_in, num_filters=16, filter_size=(3,3), stride=(1,1), nonlinearity=rectify, pad='same', W=lasagne.init.HeNormal(gain='relu'), flip_filters=False))
-
-    # first stack of residual blocks, output is 16 x 128 x 128
-    for _ in range(n):
-        l = residual_block(l)
-
-    # second stack of residual blocks, output is 32 x 64 x 64
-    l = residual_block(l, increase_dim=True, projection=True)
-    for _ in range(1,n):
-        l = residual_block(l)
-
-    # third stack of residual blocks, output is 64 x 32 x 32
-    l = residual_block(l, increase_dim=True, projection=True)
-    for _ in range(1,n):
-        l = residual_block(l)
-
-    # fourth stack of residual blocks, output is 128 x 16 x 16
-    l = residual_block(l, increase_dim=True, projection=True)
-    for _ in range(1,n):
-        l = residual_block(l)
-
-    # average pooling
-    l = GlobalPoolLayer(l)
-
-    # fully connected layer
-    network = DenseLayer(l, num_units=2,
-                         W=lasagne.init.HeNormal(),
-                         nonlinearity=softmax)
-
-    return network
-
-
-net = build_cnn(n=2)
+net = build_UNet()
 
 '''params_from = "classifyPatches_memmap_v0.3.py"
 with open("../results/%s_Params.pkl"%params_from, 'r') as f:
@@ -142,10 +119,10 @@ pred_fn = theano.function([x_sym], prediction_test)
 
 from numpy import memmap
 
-train_pos_memmap = memmap("../data/%s_train_pos.memmap" % memmap_name, dtype=np.float32, mode="r", shape=memmap_properties["train_pos_shape"])
-train_neg_memmap = memmap("../data/%s_train_neg.memmap" % memmap_name, dtype=np.float32, mode="r", shape=memmap_properties["train_neg_shape"])
-val_pos_memmap = memmap("../data/%s_val_pos.memmap" % memmap_name, dtype=np.float32, mode="r", shape=memmap_properties["val_pos_shape"])
-val_neg_memmap = memmap("../data/%s_val_neg.memmap" % memmap_name, dtype=np.float32, mode="r", shape=memmap_properties["val_neg_shape"])
+train_pos_memmap = memmap("../data/%s_train_pos.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["train_pos_shape"])
+train_neg_memmap = memmap("../data/%s_train_neg.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["train_neg_shape"])
+val_pos_memmap = memmap("../data/%s_val_pos.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["val_pos_shape"])
+val_neg_memmap = memmap("../data/%s_val_neg.memmap" % memmap_name, dtype=np.float32, mode="r+", shape=memmap_properties["val_neg_shape"])
 
 
 all_training_losses = []
@@ -159,7 +136,7 @@ for epoch in range(n_epochs):
     train_acc_tmp = 0
     train_loss_tmp = 0
     batch_ctr = 0
-    for data, seg, labels in threaded_generator(memmapGeneratorDataAugm_t1km_flair(train_neg_memmap, train_pos_memmap, BATCH_SIZE, n_pos_train, n_neg_train)):
+    for data, seg, labels in threaded_generator(memmapGeneratorDataAugm_t1km_flair_adc_cbv(train_neg_memmap, train_pos_memmap, BATCH_SIZE, n_pos_train, n_neg_train)):
         if batch_ctr != 0 and batch_ctr % int(np.floor(n_batches_per_epoch/10.)) == 0:
             print "number of batches: ", batch_ctr, "/", n_batches_per_epoch
             print "training_loss since last update: ", train_loss_tmp/np.floor(n_batches_per_epoch/10.), " train accuracy: ", train_acc_tmp/np.floor(n_batches_per_epoch/10.)
@@ -182,7 +159,7 @@ for epoch in range(n_epochs):
     test_loss = 0
     accuracies = []
     valid_batch_ctr = 0
-    for data, seg, labels in threaded_generator(memmapGenerator_t1km_flair(val_neg_memmap, val_pos_memmap, BATCH_SIZE, n_pos_val, n_neg_val)):
+    for data, seg, labels in threaded_generator(memmapGenerator_t1km_flair_adc_cbv(val_neg_memmap, val_pos_memmap, BATCH_SIZE, n_pos_val, n_neg_val)):
         loss, acc = val_fn(data, labels)
         test_loss += loss
         accuracies.append(acc)
