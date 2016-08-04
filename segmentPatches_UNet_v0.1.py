@@ -5,23 +5,19 @@ import theano.tensor as T
 import numpy as np
 import os.path as path
 import matplotlib.pyplot as plt
-from lasagne.layers import InputLayer, Pool2DLayer, DenseLayer, NonlinearityLayer, DropoutLayer, BatchNormLayer, GlobalPoolLayer, ElemwiseSumLayer, PadLayer, ExpressionLayer
-from lasagne.layers.dnn import Conv2DDNNLayer as ConvLayer
-from lasagne.nonlinearities import rectify, softmax
-from lasagne.layers import Deconv2DLayer, ConcatLayer
+from lasagne.layers import FlattenLayer
 import cPickle as pickle
-from collections import OrderedDict
 import sys
-import lmdb
 from utils import threaded_generator, printLosses, validate_result, plot_layer_weights
-from memmap_negPos_batchgen import memmapGenerator, memmapGeneratorDataAugm, memmapGenerator_t1km_flair, memmapGeneratorDataAugm_t1km_flair, memmapGeneratorDataAugm_t1km_flair_adc_cbv, memmapGenerator_t1km_flair_adc_cbv
+from memmap_negPos_batchgen import memmapGenerator, memmapGeneratorDataAugm, memmapGenerator_t1km_flair, memmapGeneratorDataAugm_t1km_flair, memmapGeneratorDataAugm_t1km_flair_adc_cbv, memmapGenerator_t1km_flair_adc_cbv, memmapGenerator_tumorClassRot
 import cPickle
 from lasagne.layers import batch_norm
+from neural_networks import build_UNet, build_residual_net
 
 
-EXPERIMENT_NAME = "classifyPatches_memmap_v0.7_ws_resample_t1km_flair_adc_cbv_new"
+EXPERIMENT_NAME = "segment_tumor_v0.1"
 memmap_name = "patchClassification_ws_resampled_t1km_flair_adc_cbv_new"
-BATCH_SIZE = 70
+BATCH_SIZE = 10
 
 with open("../data/%s_properties.pkl" % memmap_name, 'r') as f:
     memmap_properties = cPickle.load(f)
@@ -33,54 +29,7 @@ n_training_samples = memmap_properties["train_total"]
 n_val_samples = memmap_properties["val_total"]
 
 
-def build_UNet():
-    net = OrderedDict()
-    net['input'] = InputLayer((BATCH_SIZE, 1, 128, 128))
-
-    net['contr_1_1'] = batch_norm(ConvLayer(net['input'], 64, 3, nonlinearity=lasagne.nonlinearities.elu))
-    net['contr_1_2'] = batch_norm(ConvLayer(net['contr_1_1'], 64, 3, nonlinearity=lasagne.nonlinearities.elu))
-    net['pool1'] = Pool2DLayer(net['contr_1_2'], 2)
-
-    net['contr_2_1'] = batch_norm(ConvLayer(net['pool1'], 128, 3, nonlinearity=lasagne.nonlinearities.elu))
-    net['contr_2_2'] = batch_norm(ConvLayer(net['contr_2_1'], 128, 3, nonlinearity=lasagne.nonlinearities.elu))
-    net['pool2'] = Pool2DLayer(net['contr_2_2'], 2)
-
-    net['contr_3_1'] = batch_norm(ConvLayer(net['pool2'], 256, 3, nonlinearity=lasagne.nonlinearities.elu))
-    net['contr_3_2'] = batch_norm(ConvLayer(net['contr_3_1'], 256, 3, nonlinearity=lasagne.nonlinearities.elu))
-    net['pool3'] = Pool2DLayer(net['contr_3_2'], 2)
-
-    net['contr_4_1'] = batch_norm(ConvLayer(net['pool3'], 512, 3, nonlinearity=lasagne.nonlinearities.elu))
-    net['contr_4_2'] = batch_norm(ConvLayer(net['contr_4_1'], 512, 3, nonlinearity=lasagne.nonlinearities.elu))
-    net['pool4'] = Pool2DLayer(net['contr_4_2'], 2)
-
-    net['contr_5_1'] = batch_norm(ConvLayer(net['pool4'], 1024, 3, nonlinearity=lasagne.nonlinearities.elu))
-    net['contr_5_2'] = batch_norm(ConvLayer(net['contr_5_1'], 1024, 3, nonlinearity=lasagne.nonlinearities.elu))
-    net['deconv1'] = Deconv2DLayer(net['contr_5_2'], 512, 2)
-
-    net['concat1'] = ConcatLayer([net['deconv1'], net['contr_4_2']], cropping='center')
-    net['expand_1_1'] = batch_norm(ConvLayer(net['concat1'], 512, 3, nonlinearity=lasagne.nonlinearities.elu))
-    net['expand_1_2'] = batch_norm(ConvLayer(net['expand_1_1'], 512, 3, nonlinearity=lasagne.nonlinearities.elu))
-    net['deconv2'] = Deconv2DLayer(net['expand_1_2'], 256, 2)
-
-    net['concat2'] = ConcatLayer([net['deconv2'], net['contr_3_2']], cropping='center')
-    net['expand_2_1'] = batch_norm(ConvLayer(net['concat2'], 256, 3, nonlinearity=lasagne.nonlinearities.elu))
-    net['expand_2_2'] = batch_norm(ConvLayer(net['expand_2_1'], 256, 3, nonlinearity=lasagne.nonlinearities.elu))
-    net['deconv3'] = Deconv2DLayer(net['expand_2_2'], 128, 2)
-
-    net['concat3'] = ConcatLayer([net['deconv3'], net['contr_2_2']], cropping='center')
-    net['expand_3_1'] = batch_norm(ConvLayer(net['concat3'], 128, 3, nonlinearity=lasagne.nonlinearities.elu))
-    net['expand_3_2'] = batch_norm(ConvLayer(net['expand_3_1'], 128, 3, nonlinearity=lasagne.nonlinearities.elu))
-    net['deconv4'] = Deconv2DLayer(net['expand_3_2'], 64, 2)
-
-    net['concat4'] = ConcatLayer([net['deconv4'], net['contr_1_2']], cropping='center')
-    net['expand_4_1'] = batch_norm(ConvLayer(net['concat4'], 64, 3, nonlinearity=lasagne.nonlinearities.elu))
-    net['expand_4_2'] = batch_norm(ConvLayer(net['expand_4_1'], 64, 3, nonlinearity=lasagne.nonlinearities.elu))
-
-    net['segLayer'] = ConvLayer(net['expand_4_2'], 2, 1, nonlinearity=lasagne.nonlinearities.softmax)
-    return net
-
-
-net = build_UNet()
+net = build_UNet(4, BATCH_SIZE, num_output_classes=4)
 
 '''params_from = "classifyPatches_memmap_v0.3.py"
 with open("../results/%s_Params.pkl"%params_from, 'r') as f:
@@ -88,32 +37,33 @@ with open("../results/%s_Params.pkl"%params_from, 'r') as f:
     lasagne.layers.set_all_param_values(net['prob'], params)'''
 
 
+output_layer = net["output"]
 n_batches_per_epoch = np.floor(n_training_samples/float(BATCH_SIZE))
 n_test_batches = np.floor(n_val_samples/float(BATCH_SIZE))
 
 x_sym = T.tensor4()
-y_sym = T.ivector()
+seg_sym = T.ivector()
 
-l2_loss = lasagne.regularization.regularize_network_params(net, lasagne.regularization.l2) * 5e-4
+l2_loss = lasagne.regularization.regularize_network_params(output_layer, lasagne.regularization.l2) * 5e-4
 
-prediction_train = lasagne.layers.get_output(net, x_sym, deterministic=False)
-loss = lasagne.objectives.categorical_crossentropy(prediction_train, y_sym)
+prediction_train = lasagne.layers.get_output(output_layer, x_sym, deterministic=False)
+loss = lasagne.objectives.categorical_crossentropy(prediction_train, seg_sym)
 loss = loss.mean()
 loss += l2_loss
-acc_train = T.mean(T.eq(T.argmax(prediction_train, axis=1), y_sym), dtype=theano.config.floatX)
+acc_train = T.mean(T.eq(T.argmax(prediction_train, axis=1), seg_sym), dtype=theano.config.floatX)
 
-prediction_test = lasagne.layers.get_output(net, x_sym, deterministic=True)
-loss_val = lasagne.objectives.categorical_crossentropy(prediction_test, y_sym)
+prediction_test = lasagne.layers.get_output(output_layer, x_sym, deterministic=True)
+loss_val = lasagne.objectives.categorical_crossentropy(prediction_test, seg_sym)
 loss_val = loss_val.mean()
 loss_val += l2_loss
-acc = T.mean(T.eq(T.argmax(prediction_test, axis=1), y_sym), dtype=theano.config.floatX)
+acc = T.mean(T.eq(T.argmax(prediction_test, axis=1), seg_sym), dtype=theano.config.floatX)
 
-params = lasagne.layers.get_all_params(net, trainable=True)
+params = lasagne.layers.get_all_params(output_layer, trainable=True)
 learning_rate = theano.shared(np.float32(0.001))
 updates = lasagne.updates.adam(loss, params, learning_rate=learning_rate)
 
-train_fn = theano.function([x_sym, y_sym], [loss, acc_train], updates=updates)
-val_fn = theano.function([x_sym, y_sym], [loss_val, acc])
+train_fn = theano.function([x_sym, seg_sym], [loss, acc_train], updates=updates)
+val_fn = theano.function([x_sym, seg_sym], [loss_val, acc])
 pred_fn = theano.function([x_sym], prediction_test)
 
 
@@ -130,7 +80,7 @@ all_validation_losses = []
 all_validation_accuracies = []
 all_training_accs = []
 n_epochs = 20
-for epoch in range(n_epochs):
+for epoch in range(0,n_epochs):
     print "epoch: ", epoch
     train_loss = 0
     train_acc_tmp = 0
@@ -145,7 +95,7 @@ for epoch in range(n_epochs):
             train_loss_tmp = 0
             train_acc_tmp = 0
             printLosses(all_training_losses, all_training_accs, all_validation_losses, all_validation_accuracies, "../results/%s.png" % EXPERIMENT_NAME, 10)
-        loss, acc = train_fn(data, labels)
+        loss, acc = train_fn(data, seg.flatten())
         train_loss += loss
         train_loss_tmp += loss
         train_acc_tmp += acc
@@ -160,7 +110,7 @@ for epoch in range(n_epochs):
     accuracies = []
     valid_batch_ctr = 0
     for data, seg, labels in threaded_generator(memmapGenerator_t1km_flair_adc_cbv(val_neg_memmap, val_pos_memmap, BATCH_SIZE, n_pos_val, n_neg_val)):
-        loss, acc = val_fn(data, labels)
+        loss, acc = val_fn(data, seg.flatten())
         test_loss += loss
         accuracies.append(acc)
         valid_batch_ctr += 1
@@ -172,9 +122,9 @@ for epoch in range(n_epochs):
     all_validation_losses.append(test_loss)
     all_validation_accuracies.append(np.mean(accuracies))
     printLosses(all_training_losses, all_training_accs, all_validation_losses, all_validation_accuracies, "../results/%s.png" % EXPERIMENT_NAME, 10)
-    learning_rate *= 0.3
+    learning_rate *= 0.1
     with open("../results/%s_Params_ep%d.pkl" % (EXPERIMENT_NAME, epoch), 'w') as f:
-        cPickle.dump(lasagne.layers.get_all_param_values(net), f)
+        cPickle.dump(lasagne.layers.get_all_param_values(output_layer), f)
     with open("../results/%s_allLossesNAccur_ep%d.pkl"% (EXPERIMENT_NAME, epoch), 'w') as f:
         cPickle.dump([all_training_losses, all_validation_losses, all_validation_accuracies], f)
 

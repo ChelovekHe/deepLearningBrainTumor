@@ -15,7 +15,7 @@ import threading
 from multiprocessing import Pool
 import sys
 sys.path.append("experiments/code")
-from utils import rand_rotation_matrix, create_random_rotation, create_matrix_rotation_y, create_matrix_rotation_z, create_matrix_rotation_x
+from utils import create_random_rotation, create_matrix_rotation_y, create_matrix_rotation_z, create_matrix_rotation_x
 
 PATCH_SIZE = 128
 PERCENT_VAL = 0.15 # expected percentage of positive samples

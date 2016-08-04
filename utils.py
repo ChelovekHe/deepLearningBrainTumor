@@ -8,6 +8,48 @@ from numpy import memmap
 import cPickle
 from multiprocessing import Process
 from multiprocessing import Queue as MPQueue
+from time import sleep
+import theano
+import theano.tensor as T
+
+def categorical_crossentropy_fcn(predicted, target):
+    # predicted shape = (BATCH_SIZE, N_CLASSES, X, Y)
+    # target shape = (BATCH_SIZE, N_CLASSES, X, Y)
+    return -target * T.log(predicted)
+
+def convert_seg_map_for_crossentropy(seg_map, all_classes):
+    # we assume that the int's in the seg map are continuous (classes (0, 1, 2, 3, 4) and NOT something like (0, 12, 54, 13))
+    # we assume that the seg map has a shape of (BATCH_SIZE, 1, X, Y) and that it stores the int for the correct class
+    # we need all_classes because we cannot be sure that every class is represented in every segmentation map
+    seg_map_shape = seg_map.shape
+    seg_map_shape[1] = len(all_classes)
+    new_seg_map = np.zeros(seg_map_shape, dtype=seg_map.dtype)
+    for i, j in enumerate(all_classes):
+        new_seg_map[:, i, :, :][seg_map == j] = 1
+    return new_seg_map
+
+def multi_threaded_generator(generator, num_cached=10, num_threads=4):
+    queue = MPQueue(maxsize=num_cached)
+
+    # define producer (putting items into queue)
+    def producer():
+        for item in generator:
+            queue.put(item)
+            # pretend we are doing some calculations
+            sleep(0.5)
+        queue.put('DONE')
+
+    # start producer (in a background thread)
+    for _ in xrange(num_threads):
+        thread = Process(target=producer)
+        thread.daemon = True
+        thread.start()
+
+    # run as consumer (read items from queue, in current thread)
+    res = queue.get()
+    while res is not 'DONE':
+        yield res
+        res = queue.get()
 
 def threaded_generator(generator, num_cached=10):
     # this code is written by jan Schluter
@@ -262,6 +304,7 @@ def plot_layer_weights(layer):
         plt.axis('off')
     plt.show()
 
+
 def imgSaveFalsePositiveFalseNegativeCorrectPositiveCorrectNegative(pred_fn, n_images=16, BATCH_SIZE = 50):
     with open("../data/patchClassification_memmap_properties.pkl", 'r') as f:
         memmap_properties = cPickle.load(f)
@@ -355,49 +398,6 @@ def imgSaveFalsePositiveFalseNegativeCorrectPositiveCorrectNegative(pred_fn, n_i
     plt.close()
 
 
-
-def rand_rotation_matrix(deflection=1.0, randnums=None):
-    """
-    Creates a random rotation matrix.
-
-    deflection: the magnitude of the rotation. For 0, no rotation; for 1, competely random
-    rotation. Small deflection => small perturbation.
-    randnums: 3 random numbers in the range [0, 1]. If `None`, they will be auto-generated.
-    """
-    # from http://www.realtimerendering.com/resources/GraphicsGems/gemsiii/rand_rotation.c
-
-    if randnums is None:
-        randnums = np.random.uniform(size=(3,))
-
-    theta, phi, z = randnums
-
-    theta = theta * 2.0*deflection*np.pi  # Rotation about the pole (Z).
-    phi = phi * 2.0*np.pi  # For direction of pole deflection.
-    z = z * 2.0*deflection  # For magnitude of pole deflection.
-
-    # Compute a vector V used for distributing points over the sphere
-    # via the reflection I - V Transpose(V).  This formulation of V
-    # will guarantee that if x[1] and x[2] are uniformly distributed,
-    # the reflected points will be uniform on the sphere.  Note that V
-    # has length sqrt(2) to eliminate the 2 in the Householder matrix.
-
-    r = np.sqrt(z)
-    Vx, Vy, Vz = V = (
-        np.sin(phi) * r,
-        np.cos(phi) * r,
-        np.sqrt(2.0 - z)
-        )
-
-    st = np.sin(theta)
-    ct = np.cos(theta)
-
-    R = np.array(((ct, st, 0), (-st, ct, 0), (0, 0, 1)))
-
-    # Construct the rotation matrix  ( V Transpose(V) - I ) R.
-
-    M = (np.outer(V, V) - np.eye(3)).dot(R)
-    return M
-
 def create_matrix_rotation_x(angle, matrix = None):
     rotation_x = np.array([[1,              0,              0],
                            [0,              np.cos(angle),  -np.sin(angle)],
@@ -406,6 +406,7 @@ def create_matrix_rotation_x(angle, matrix = None):
         return rotation_x
 
     return np.dot(matrix, rotation_x)
+
 
 def create_matrix_rotation_y(angle, matrix = None):
     rotation_y = np.array([[np.cos(angle),  0,              np.sin(angle)],
@@ -416,6 +417,7 @@ def create_matrix_rotation_y(angle, matrix = None):
 
     return np.dot(matrix, rotation_y)
 
+
 def create_matrix_rotation_z(angle, matrix = None):
     rotation_z = np.array([[np.cos(angle),  -np.sin(angle), 0],
                            [np.sin(angle),  np.cos(angle),  0],
@@ -424,6 +426,7 @@ def create_matrix_rotation_z(angle, matrix = None):
         return rotation_z
 
     return np.dot(matrix, rotation_z)
+
 
 def create_random_rotation():
     return create_matrix_rotation_x(np.random.uniform(0.0, 2*np.pi), create_matrix_rotation_y(np.random.uniform(0.0, 2*np.pi), create_matrix_rotation_z(np.random.uniform(0.0, 2*np.pi))))
