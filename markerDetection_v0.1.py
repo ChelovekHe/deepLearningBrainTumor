@@ -20,13 +20,14 @@ from memmap_negPos_batchgen import memmapGenerator, memmapGeneratorDataAugm, mem
 import cPickle
 from lasagne.layers import batch_norm
 from neural_networks import build_residual_net
+from experimentsWithMPQueue import multi_threaded_generator
 
 
-EXPERIMENT_NAME = "markerDetection_RTK2"
-memmap_name = "patchClassification_ws_resampled_t1km_flair_adc_cbv_markers_RTK2"
-BATCH_SIZE = 40
+EXPERIMENT_NAME = "markerDetection_MGMT_noloccues"
+memmap_name = "patchClassification_ws_resampled_t1km_flair_adc_cbv_markers_MGMT"
+BATCH_SIZE = 50
 
-with open("../data/%s_properties.pkl" % memmap_name, 'r') as f:
+with open("/media/fabian/DeepLearningData/datasets/%s_properties.pkl" % memmap_name, 'r') as f:
     memmap_properties = cPickle.load(f)
 n_pos_train = memmap_properties["train_pos"]
 n_neg_train = memmap_properties["train_neg"]
@@ -36,7 +37,7 @@ n_training_samples = memmap_properties["train_total"]
 n_val_samples = memmap_properties["val_total"]
 
 
-net = build_residual_net(n=2, BATCH_SIZE=BATCH_SIZE, n_input_channels=15)
+net = build_residual_net(n=2, BATCH_SIZE=BATCH_SIZE, n_input_channels=12)
 
 '''params_from = "classifyPatches_memmap_v0.7_ws_resample_t1km_flair_adc_cbv_new_Params_ep6.pkl"
 with open("../results/%s"%params_from, 'r') as f:
@@ -78,10 +79,10 @@ pred_fn = theano.function([x_sym], prediction_test)
 
 from numpy import memmap
 
-train_pos_memmap = memmap("../data/%s_train_pos.memmap" % memmap_name, dtype=np.float32, mode="r", shape=memmap_properties["train_pos_shape"])
-train_neg_memmap = memmap("../data/%s_train_neg.memmap" % memmap_name, dtype=np.float32, mode="r", shape=memmap_properties["train_neg_shape"])
-val_pos_memmap = memmap("../data/%s_val_pos.memmap" % memmap_name, dtype=np.float32, mode="r", shape=memmap_properties["val_pos_shape"])
-val_neg_memmap = memmap("../data/%s_val_neg.memmap" % memmap_name, dtype=np.float32, mode="r", shape=memmap_properties["val_neg_shape"])
+train_pos_memmap = memmap("/media/fabian/DeepLearningData/datasets/%s_train_pos.memmap" % memmap_name, dtype=np.float32, mode="r", shape=memmap_properties["train_pos_shape"])
+train_neg_memmap = memmap("/media/fabian/DeepLearningData/datasets/%s_train_neg.memmap" % memmap_name, dtype=np.float32, mode="r", shape=memmap_properties["train_neg_shape"])
+val_pos_memmap = memmap("/media/fabian/DeepLearningData/datasets/%s_val_pos.memmap" % memmap_name, dtype=np.float32, mode="r", shape=memmap_properties["val_pos_shape"])
+val_neg_memmap = memmap("/media/fabian/DeepLearningData/datasets/%s_val_neg.memmap" % memmap_name, dtype=np.float32, mode="r", shape=memmap_properties["val_neg_shape"])
 
 
 all_training_losses = []
@@ -95,7 +96,7 @@ for epoch in range(n_epochs):
     train_acc_tmp = 0
     train_loss_tmp = 0
     batch_ctr = 0
-    for data, seg, labels in threaded_generator(memmapGenerator_tumorClassRot(train_pos_memmap, train_neg_memmap, BATCH_SIZE, n_pos_train, n_pos_train)):
+    for data, seg, labels in multi_threaded_generator(memmapGenerator_tumorClassRot(train_pos_memmap, train_neg_memmap, BATCH_SIZE, n_pos_train, n_pos_train), num_threads=2, num_cached=50):
         if batch_ctr != 0 and batch_ctr % int(np.floor(n_batches_per_epoch/10.)) == 0:
             print "number of batches: ", batch_ctr, "/", n_batches_per_epoch
             print "training_loss since last update: ", train_loss_tmp/np.floor(n_batches_per_epoch/10.), " train accuracy: ", train_acc_tmp/np.floor(n_batches_per_epoch/10.)
@@ -104,7 +105,7 @@ for epoch in range(n_epochs):
             train_loss_tmp = 0
             train_acc_tmp = 0
             printLosses(all_training_losses, all_training_accs, all_validation_losses, all_validation_accuracies, "../results/%s.png" % EXPERIMENT_NAME, 10)
-        loss, acc = train_fn(data, labels)
+        loss, acc = train_fn(data[:, :12, :, :], labels)
         train_loss += loss
         train_loss_tmp += loss
         train_acc_tmp += acc
@@ -118,8 +119,8 @@ for epoch in range(n_epochs):
     test_loss = 0
     accuracies = []
     valid_batch_ctr = 0
-    for data, seg, labels in threaded_generator(memmapGenerator_tumorClassRot(val_pos_memmap, val_neg_memmap, BATCH_SIZE, n_pos_val, n_pos_val)):
-        loss, acc = val_fn(data, labels)
+    for data, seg, labels in multi_threaded_generator(memmapGenerator_tumorClassRot(val_pos_memmap, val_neg_memmap, BATCH_SIZE, n_pos_val, n_pos_val), num_threads=2, num_cached=50):
+        loss, acc = val_fn(data[:, :12, :, :], labels)
         test_loss += loss
         accuracies.append(acc)
         valid_batch_ctr += 1

@@ -12,22 +12,6 @@ from time import sleep
 import theano
 import theano.tensor as T
 
-def categorical_crossentropy_fcn(predicted, target):
-    # predicted shape = (BATCH_SIZE, N_CLASSES, X, Y)
-    # target shape = (BATCH_SIZE, N_CLASSES, X, Y)
-    return -target * T.log(predicted)
-
-def convert_seg_map_for_crossentropy(seg_map, all_classes):
-    # we assume that the int's in the seg map are continuous (classes (0, 1, 2, 3, 4) and NOT something like (0, 12, 54, 13))
-    # we assume that the seg map has a shape of (BATCH_SIZE, 1, X, Y) and that it stores the int for the correct class
-    # we need all_classes because we cannot be sure that every class is represented in every segmentation map
-    seg_map_shape = seg_map.shape
-    seg_map_shape[1] = len(all_classes)
-    new_seg_map = np.zeros(seg_map_shape, dtype=seg_map.dtype)
-    for i, j in enumerate(all_classes):
-        new_seg_map[:, i, :, :][seg_map == j] = 1
-    return new_seg_map
-
 def multi_threaded_generator(generator, num_cached=10, num_threads=4):
     queue = MPQueue(maxsize=num_cached)
 
@@ -430,3 +414,111 @@ def create_matrix_rotation_z(angle, matrix = None):
 
 def create_random_rotation():
     return create_matrix_rotation_x(np.random.uniform(0.0, 2*np.pi), create_matrix_rotation_y(np.random.uniform(0.0, 2*np.pi), create_matrix_rotation_z(np.random.uniform(0.0, 2*np.pi))))
+
+def show_segmentation_results(data, seg_true, seg_pred, img_ctr=0):
+    n_channels = data.shape[1]
+    n_images_in_figure = float(n_channels + 3)
+    n_cols_and_rows = int(np.ceil(n_images_in_figure**0.5))
+    seg_diff = np.zeros(seg_true.shape)
+    seg_diff[seg_true!=seg_pred] = 1
+    for x in range(0, data.shape[0]):
+        plt.figure(figsize=(10,10))
+        for i in range(1, n_channels+1):
+            plt.subplot(n_cols_and_rows, n_cols_and_rows, i)
+            plt.imshow(data[x, i-1, :, :], cmap="gray", interpolation="none")
+        plt.subplot(n_cols_and_rows, n_cols_and_rows, n_channels+1)
+        plt.imshow(seg_true[x, 0, :, :], cmap="jet", interpolation="none")
+        plt.subplot(n_cols_and_rows, n_cols_and_rows, n_channels+2)
+        plt.imshow(seg_pred[x, 0, :, :], cmap="jet", interpolation="none")
+        plt.subplot(n_cols_and_rows, n_cols_and_rows, n_channels+3)
+        plt.imshow(seg_diff[x, 0, :, :], cmap="gray", interpolation="none")
+        plt.savefig("../some_images/seg_res_%04.0d.png"%(img_ctr+x))
+    return img_ctr+data.shape[0]
+
+
+
+
+from scipy.ndimage.filters import gaussian_filter
+from scipy.ndimage.interpolation import map_coordinates
+
+def elastic_transform(image, alpha=100, sigma=10, random_state=None):
+    """Elastic deformation of images as described in [Simard2003]_.
+    .. [Simard2003] Simard, Steinkraus and Platt, "Best Practices for
+       Convolutional Neural Networks applied to Visual Document Analysis", in
+       Proc. of the International Conference on Document Analysis and
+       Recognition, 2003.
+    """
+    assert len(image.shape)==2
+
+    if random_state is None:
+        random_state = np.random.RandomState(None)
+
+    shape = image.shape
+
+    dx = gaussian_filter((random_state.rand(*shape) * 2 - 1), sigma, mode="constant", cval=0) * alpha
+    dy = gaussian_filter((random_state.rand(*shape) * 2 - 1), sigma, mode="constant", cval=0) * alpha
+
+    x, y = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]), indexing='ij')
+    indices = np.reshape(x+dx, (-1, 1)), np.reshape(y+dy, (-1, 1))
+
+    return map_coordinates(image, indices, order=3).reshape(shape)
+
+def elastic_transform_3d(image, alpha=100, sigma=10, random_state=None):
+    """Elastic deformation of images as described in [Simard2003]_.
+    .. [Simard2003] Simard, Steinkraus and Platt, "Best Practices for
+       Convolutional Neural Networks applied to Visual Document Analysis", in
+       Proc. of the International Conference on Document Analysis and
+       Recognition, 2003.
+    """
+    assert len(image.shape)==3
+
+    if random_state is None:
+        random_state = np.random.RandomState(None)
+
+    shape = image.shape
+
+    dx = gaussian_filter((random_state.rand(*shape) * 2 - 1), sigma, mode="constant", cval=0) * alpha
+    dy = gaussian_filter((random_state.rand(*shape) * 2 - 1), sigma, mode="constant", cval=0) * alpha
+    dz = gaussian_filter((random_state.rand(*shape) * 2 - 1), sigma, mode="constant", cval=0) * alpha
+
+    x, y, z = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]), np.arange(shape[2]), indexing='ij')
+    indices = np.reshape(x+dx, (-1, 1)), np.reshape(y+dy, (-1, 1)), np.reshape(z+dz, (-1, 1))
+
+    return map_coordinates(image, indices, order=3).reshape(shape)
+
+def generate_elastic_deform_coordinates(shape, alpha, sigma):
+    random_state = np.random.RandomState(None)
+    n_dim = len(shape)
+    offsets = []
+    for _ in range(n_dim):
+        offsets.append(gaussian_filter((random_state.rand(*shape) * 2 - 1), sigma, mode="constant", cval=0) * alpha)
+
+    tmp = tuple([np.arange(i) for i in shape])
+    coords = np.meshgrid(*tmp, indexing='ij')
+    indices = [np.reshape(i+j, (-1, 1)) for i,j in zip(offsets, coords)]
+    return indices
+
+
+def test_some_deformations():
+    from skimage import data
+    img = data.camera()
+    plt.figure(figsize=(10,10))
+    for i, alpha in enumerate([0, 0.5, 1., 2., 5.]):
+        for j, sigma in enumerate([0, 50., 100., 200., 500.]):
+            img2 = elastic_transform(img, alpha, sigma)
+            plt.subplot(5, 5, i*5 + (j+1))
+            plt.imshow(img2)
+    plt.show()
+
+
+def plot_layer_activations(layer, data, output_fname="../results/layerActivation.png"):
+    pred = lasagne.layers.get_output(layer, data).eval()
+    n_channels = pred.shape[1]
+    plt.figure(figsize=(12, 12))
+    plots_per_axis = int(np.ceil(np.sqrt(n_channels)))
+    for i in xrange(n_channels):
+        plt.subplot(plots_per_axis, plots_per_axis, i+1)
+        plt.imshow(pred[0, i, :, :], cmap="gray", interpolation="nearest")
+    plt.savefig(output_fname)
+    plt.close()
+
