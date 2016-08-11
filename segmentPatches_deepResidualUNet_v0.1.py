@@ -17,9 +17,9 @@ from experimentsWithMPQueue import multi_threaded_generator
 
 sys.setrecursionlimit(2000)
 
-EXPERIMENT_NAME = "segment_tumor_v0.1_Unet"
+EXPERIMENT_NAME = "segment_tumor_v0.1_deepResidualUnet_n_1"
 memmap_name = "patchClassification_ws_resampled_t1km_flair_adc_cbv_new"
-BATCH_SIZE = 40
+BATCH_SIZE = 25
 
 with open("/media/fabian/DeepLearningData/datasets/%s_properties.pkl" % memmap_name, 'r') as f:
     memmap_properties = cPickle.load(f)
@@ -31,7 +31,7 @@ n_training_samples = memmap_properties["train_total"]
 n_val_samples = memmap_properties["val_total"]
 
 
-net = build_UNet(4, BATCH_SIZE, num_output_classes=4, base_n_filters=16)
+net = build_deep_residual_UNet(4, BATCH_SIZE, num_output_classes=4, base_n_filters=16, n_res_blocks=1)
 output_layer = net["output"]
 
 '''params_from = EXPERIMENT_NAME
