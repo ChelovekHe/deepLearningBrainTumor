@@ -34,10 +34,10 @@ n_val_samples = memmap_properties["val_total"]
 net = build_UNet(4, BATCH_SIZE, num_output_classes=4, base_n_filters=16)
 output_layer = net["output"]
 
-params_from = EXPERIMENT_NAME
+'''params_from = EXPERIMENT_NAME
 with open("../results/%s_Params_ep8.pkl"%params_from, 'r') as f:
     params = cPickle.load(f)
-    lasagne.layers.set_all_param_values(output_layer, params)
+    lasagne.layers.set_all_param_values(output_layer, params)'''
 
 
 n_batches_per_epoch = np.floor(n_training_samples/float(BATCH_SIZE))
