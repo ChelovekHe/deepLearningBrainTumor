@@ -19,7 +19,7 @@ sys.setrecursionlimit(2000)
 
 EXPERIMENT_NAME = "segment_tumor_v0.1_deepResidualUnet_n_1"
 memmap_name = "patchClassification_ws_resampled_t1km_flair_adc_cbv_new"
-BATCH_SIZE = 25
+BATCH_SIZE = 26
 
 with open("/media/fabian/DeepLearningData/datasets/%s_properties.pkl" % memmap_name, 'r') as f:
     memmap_properties = cPickle.load(f)
@@ -170,7 +170,7 @@ for epoch in range(0, n_epochs):
 
 import cPickle
 with open("../results/%s_Params.pkl"%EXPERIMENT_NAME, 'w') as f:
-    cPickle.dump(lasagne.layers.get_all_param_values(net), f)
+    cPickle.dump(lasagne.layers.get_all_param_values(output_layer), f)
 with open("../results/%s_allLossesNAccur.pkl"%EXPERIMENT_NAME, 'w') as f:
     cPickle.dump([all_training_losses, all_training_accs, all_validation_losses, all_validation_accuracies], f)
 

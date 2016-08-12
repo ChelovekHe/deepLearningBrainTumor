@@ -247,7 +247,7 @@ def build_residual_UNet(n_input_channels=1, BATCH_SIZE=None, num_output_classes=
     net['conv_1'] = batch_norm(ConvLayer(net['input'], num_filters=base_n_filters, filter_size=(3,3), stride=(1,1), nonlinearity=rectify, pad='same', W=lasagne.init.HeNormal(gain='relu'), flip_filters=False))
 
     # = residual, increase dim, projection true
-    net['contr_block_1'] = residual_block_noPool(net['input'], True, True)
+    net['contr_block_1'] = residual_block_noPool(net['conv_1'], False, True)
     net['contr_block_1_pool'] = Pool2DLayer(net['contr_block_1'], 2)
 
     # = residual, increase dim, projection true
@@ -298,7 +298,7 @@ def build_deep_residual_UNet(n_input_channels=1, BATCH_SIZE=None, num_output_cla
     l = net['conv_1'] = batch_norm(ConvLayer(l, num_filters=base_n_filters, filter_size=(3,3), stride=(1,1), nonlinearity=rectify, pad='same', W=lasagne.init.HeNormal(gain='relu'), flip_filters=False))
 
     # = residual, increase dim, projection true
-    l = net['contr_block_1_1'] = residual_block_noPool(l, True, True)
+    l = net['contr_block_1_1'] = residual_block_noPool(l, False, True)
     for i in xrange(n_res_blocks):
         l = net['contr_block_1_%d'%(i+2)] = residual_block_noPool(l, False, True)
     l = net['contr_block_1_pool'] = Pool2DLayer(l, 2)

@@ -433,6 +433,7 @@ def show_segmentation_results(data, seg_true, seg_pred, img_ctr=0):
         plt.subplot(n_cols_and_rows, n_cols_and_rows, n_channels+3)
         plt.imshow(seg_diff[x, 0, :, :], cmap="gray", interpolation="none")
         plt.savefig("../some_images/seg_res_%04.0d.png"%(img_ctr+x))
+        plt.close()
     return img_ctr+data.shape[0]
 
 
