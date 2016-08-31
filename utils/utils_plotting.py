@@ -1,65 +1,37 @@
 __author__ = 'fabian'
+
+import sys
+sys.path.append("../../generators")
+sys.path.append("../../dataset_utils")
+from data_generators import memmapGenerator, memmapGenerator_t1km_flair, memmapGenerator_t1km_flair_adc_cbv, memmapGenerator_t1km_flair_adc_cbv_markers, memmapGenerator_tumorClassRot
+from dataset_utility import correct_nans
 import numpy as np
 import matplotlib.pyplot as plt
 import lasagne
-from memmap_negPos_batchgen import memmapGenerator, memmapGenerator_t1km_flair
-from memmap_negPos_batchgen import memmapGenerator_t1km_flair_adc_cbv, memmapGenerator_t1km_flair_adc_cbv_markers, memmapGenerator_tumorClassRot
-from numpy import memmap
 import cPickle
-from multiprocessing import Process
-from multiprocessing import Queue as MPQueue
-from time import sleep
-import theano
-import theano.tensor as T
+from numpy import memmap
+from lasagne.layers.dnn import Conv2DDNNLayer
+from lasagne.layers import InputLayer, Upscale2DLayer, ConcatLayer, Pool2DLayer
 
-def multi_threaded_generator(generator, num_cached=10, num_threads=4):
-    queue = MPQueue(maxsize=num_cached)
+def plot_layer_activations(layer, data, output_fname="../results/layerActivation.png"):
+    pred = lasagne.layers.get_output(layer, data).eval()
+    n_channels = pred.shape[1]
+    plt.figure(figsize=(12, 12))
+    plots_per_axis = int(np.ceil(np.sqrt(n_channels)))
+    for i in xrange(n_channels):
+        plt.subplot(plots_per_axis, plots_per_axis, i+1)
+        plt.axis('off')
+        plt.imshow(pred[0, i, :, :], cmap="gray", interpolation="nearest")
+    plt.savefig(output_fname)
+    plt.close()
 
-    # define producer (putting items into queue)
-    def producer():
-        for item in generator:
-            queue.put(item)
-            # pretend we are doing some calculations
-            sleep(0.5)
-        queue.put('DONE')
 
-    # start producer (in a background thread)
-    for _ in xrange(num_threads):
-        thread = Process(target=producer)
-        thread.daemon = True
-        thread.start()
+def plot_all_layer_activations(net, data):
+    layers = net.keys()
+    for id, layer in enumerate(layers):
+        if isinstance(net[layer], Conv2DDNNLayer) or isinstance(layer, Pool2DLayer) or isinstance(layer, Upscale2DLayer) or isinstance(layer, ConcatLayer) or isinstance(layer, InputLayer):
+            plot_layer_activations(net[layer], data, "%03.0d-%s.png" % (id, layer))
 
-    # run as consumer (read items from queue, in current thread)
-    res = queue.get()
-    while res is not 'DONE':
-        yield res
-        res = queue.get()
-
-def threaded_generator(generator, num_cached=10):
-    # this code is written by jan Schluter
-    # copied from https://github.com/benanne/Lasagne/issues/12
-    import Queue
-    queue = Queue.Queue(maxsize=num_cached)
-    sentinel = object()  # guaranteed unique reference
-
-    # define producer (putting items into queue)
-    def producer():
-        for item in generator:
-            queue.put(item)
-        queue.put(sentinel)
-
-    # start producer (in a background thread)
-    import threading
-    thread = threading.Thread(target=producer)
-    thread.daemon = True
-    thread.start()
-
-    # run as consumer (read items from queue, in current thread)
-    item = queue.get()
-    while item is not sentinel:
-        yield item
-        queue.task_done()
-        item = queue.get()
 
 def printLosses(all_training_losses, all_training_accs, all_validation_losses, all_valid_accur, fname, samplesPerEpoch=10):
     fig, ax1 = plt.subplots()
@@ -113,6 +85,7 @@ def validate_result(img, convLayer):
     plt.savefig("../results/filtered_by_scipy.png")
     plt.close()
 
+
 def plot_some_data():
     memmap_name = "patchClassification_ws_resampled"
     with open("../data/%s_properties.pkl" % memmap_name, 'r') as f:
@@ -149,6 +122,7 @@ def plot_some_data():
             plt.close()
             ctr += 1
         i += 1
+
 
 def plot_some_data_t1km_flair():
     memmap_name = "patchClassification_ws_resampled_t1km_flair_new"
@@ -382,45 +356,12 @@ def imgSaveFalsePositiveFalseNegativeCorrectPositiveCorrectNegative(pred_fn, n_i
     plt.close()
 
 
-def create_matrix_rotation_x(angle, matrix = None):
-    rotation_x = np.array([[1,              0,              0],
-                           [0,              np.cos(angle),  -np.sin(angle)],
-                           [0,              np.sin(angle),  np.cos(angle)]])
-    if matrix is None:
-        return rotation_x
-
-    return np.dot(matrix, rotation_x)
-
-
-def create_matrix_rotation_y(angle, matrix = None):
-    rotation_y = np.array([[np.cos(angle),  0,              np.sin(angle)],
-                           [0,              1,              0],
-                           [-np.sin(angle), 0,              np.cos(angle)]])
-    if matrix is None:
-        return rotation_y
-
-    return np.dot(matrix, rotation_y)
-
-
-def create_matrix_rotation_z(angle, matrix = None):
-    rotation_z = np.array([[np.cos(angle),  -np.sin(angle), 0],
-                           [np.sin(angle),  np.cos(angle),  0],
-                           [0,              0,              1]])
-    if matrix is None:
-        return rotation_z
-
-    return np.dot(matrix, rotation_z)
-
-
-def create_random_rotation():
-    return create_matrix_rotation_x(np.random.uniform(0.0, 2*np.pi), create_matrix_rotation_y(np.random.uniform(0.0, 2*np.pi), create_matrix_rotation_z(np.random.uniform(0.0, 2*np.pi))))
-
 def show_segmentation_results(data, seg_true, seg_pred, img_ctr=0):
     n_channels = data.shape[1]
     n_images_in_figure = float(n_channels + 3)
     n_cols_and_rows = int(np.ceil(n_images_in_figure**0.5))
-    seg_diff = np.zeros(seg_true.shape)
-    seg_diff[seg_true!=seg_pred] = 1
+    seg_diff = np.zeros(seg_pred.shape)
+    seg_diff[seg_true[:, 0,:,:]!=seg_pred] = 1
     for x in range(0, data.shape[0]):
         plt.figure(figsize=(10,10))
         for i in range(1, n_channels+1):
@@ -429,97 +370,78 @@ def show_segmentation_results(data, seg_true, seg_pred, img_ctr=0):
         plt.subplot(n_cols_and_rows, n_cols_and_rows, n_channels+1)
         plt.imshow(seg_true[x, 0, :, :], cmap="jet", interpolation="none")
         plt.subplot(n_cols_and_rows, n_cols_and_rows, n_channels+2)
-        plt.imshow(seg_pred[x, 0, :, :], cmap="jet", interpolation="none")
+        plt.imshow(seg_pred[x, :, :], cmap="jet", interpolation="none")
         plt.subplot(n_cols_and_rows, n_cols_and_rows, n_channels+3)
-        plt.imshow(seg_diff[x, 0, :, :], cmap="gray", interpolation="none")
-        plt.savefig("../some_images/seg_res_%04.0d.png"%(img_ctr+x))
+        plt.imshow(seg_diff[x, :, :], cmap="gray", interpolation="none")
+        plt.savefig("/home/fabian/datasets/Hirntumor_von_David/experiments/some_images/seg_res_%04.0d.png"%(img_ctr+x))
         plt.close()
     return img_ctr+data.shape[0]
 
 
+def plot_histograms_for_all_images():
+    import os
+    import SimpleITK as sitk
+    import matplotlib.pyplot as plt
+    folder = "/home/fabian/datasets/Hirntumor_von_David/"
+    for i in range(150):
+        if os.path.isdir(os.path.join(folder, "%03.0d"%i)):
+            if os.path.isfile(os.path.join(folder, "%03.0f"%i, "T1_m2_bc_ws.nii.gz")):
+                img = correct_nans(sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(folder, "%03.0d"%i, "T1_m2_bc_ws.nii.gz"))))
+                plt.figure()
+                plt.hist(img[img!=img[0,0,0]].ravel(), 100)
+                plt.savefig(folder+"%03.0f_t1_ws_histogram.png"%i)
+                plt.close()
+
+    import os
+    import SimpleITK as sitk
+    import matplotlib.pyplot as plt
+    folder = "/home/fabian/datasets/Hirntumor_von_David/"
+    for i in range(150):
+        if os.path.isdir(os.path.join(folder, "%03.0d"%i)):
+            if os.path.isfile(os.path.join(folder, "%03.0f"%i, "T1KM_m2_bc_ws.nii.gz")):
+                img = correct_nans(sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(folder, "%03.0d"%i, "T1KM_m2_bc_ws.nii.gz"))))
+                plt.figure()
+                plt.hist(img[img!=img[0,0,0]].ravel(), 100)
+                plt.savefig(folder+"%03.0f_t1km_ws_histogram.png"%i)
+                plt.close()
 
 
-from scipy.ndimage.filters import gaussian_filter
-from scipy.ndimage.interpolation import map_coordinates
+    import os
+    import SimpleITK as sitk
+    import matplotlib.pyplot as plt
+    folder = "/home/fabian/datasets/Hirntumor_von_David/"
+    for i in range(150):
+        if os.path.isdir(os.path.join(folder, "%03.0d"%i)):
+            if os.path.isfile(os.path.join(folder, "%03.0f"%i, "ADC_mutualinfo2_reg.nii.gz")):
+                img = correct_nans(sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(folder, "%03.0d"%i, "ADC_mutualinfo2_reg.nii.gz"))))
+                plt.figure()
+                plt.hist(img[img!=img[0,0,0]].ravel(), 100)
+                plt.savefig(folder+"%03.0f_ADC_ws_histogram.png"%i)
+                plt.close()
 
-def elastic_transform(image, alpha=100, sigma=10, random_state=None):
-    """Elastic deformation of images as described in [Simard2003]_.
-    .. [Simard2003] Simard, Steinkraus and Platt, "Best Practices for
-       Convolutional Neural Networks applied to Visual Document Analysis", in
-       Proc. of the International Conference on Document Analysis and
-       Recognition, 2003.
-    """
-    assert len(image.shape)==2
+    import os
+    import SimpleITK as sitk
+    import matplotlib.pyplot as plt
+    folder = "/home/fabian/datasets/Hirntumor_von_David/"
+    for i in range(150):
+        if os.path.isdir(os.path.join(folder, "%03.0d"%i)):
+            if os.path.isfile(os.path.join(folder, "%03.0f"%i, "CBV_mutualinfo2_reg.nii.gz")):
+                img = correct_nans(sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(folder, "%03.0d"%i, "CBV_mutualinfo2_reg.nii.gz"))))
+                plt.figure()
+                plt.hist(img[img!=img[0,0,0]].ravel(), 100)
+                plt.savefig(folder+"%03.0f_CBV_ws_histogram.png"%i)
+                plt.close()
 
-    if random_state is None:
-        random_state = np.random.RandomState(None)
-
-    shape = image.shape
-
-    dx = gaussian_filter((random_state.rand(*shape) * 2 - 1), sigma, mode="constant", cval=0) * alpha
-    dy = gaussian_filter((random_state.rand(*shape) * 2 - 1), sigma, mode="constant", cval=0) * alpha
-
-    x, y = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]), indexing='ij')
-    indices = np.reshape(x+dx, (-1, 1)), np.reshape(y+dy, (-1, 1))
-
-    return map_coordinates(image, indices, order=3).reshape(shape)
-
-def elastic_transform_3d(image, alpha=100, sigma=10, random_state=None):
-    """Elastic deformation of images as described in [Simard2003]_.
-    .. [Simard2003] Simard, Steinkraus and Platt, "Best Practices for
-       Convolutional Neural Networks applied to Visual Document Analysis", in
-       Proc. of the International Conference on Document Analysis and
-       Recognition, 2003.
-    """
-    assert len(image.shape)==3
-
-    if random_state is None:
-        random_state = np.random.RandomState(None)
-
-    shape = image.shape
-
-    dx = gaussian_filter((random_state.rand(*shape) * 2 - 1), sigma, mode="constant", cval=0) * alpha
-    dy = gaussian_filter((random_state.rand(*shape) * 2 - 1), sigma, mode="constant", cval=0) * alpha
-    dz = gaussian_filter((random_state.rand(*shape) * 2 - 1), sigma, mode="constant", cval=0) * alpha
-
-    x, y, z = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]), np.arange(shape[2]), indexing='ij')
-    indices = np.reshape(x+dx, (-1, 1)), np.reshape(y+dy, (-1, 1)), np.reshape(z+dz, (-1, 1))
-
-    return map_coordinates(image, indices, order=3).reshape(shape)
-
-def generate_elastic_deform_coordinates(shape, alpha, sigma):
-    random_state = np.random.RandomState(None)
-    n_dim = len(shape)
-    offsets = []
-    for _ in range(n_dim):
-        offsets.append(gaussian_filter((random_state.rand(*shape) * 2 - 1), sigma, mode="constant", cval=0) * alpha)
-
-    tmp = tuple([np.arange(i) for i in shape])
-    coords = np.meshgrid(*tmp, indexing='ij')
-    indices = [np.reshape(i+j, (-1, 1)) for i,j in zip(offsets, coords)]
-    return indices
-
-
-def test_some_deformations():
-    from skimage import data
-    img = data.camera()
-    plt.figure(figsize=(10,10))
-    for i, alpha in enumerate([0, 0.5, 1., 2., 5.]):
-        for j, sigma in enumerate([0, 50., 100., 200., 500.]):
-            img2 = elastic_transform(img, alpha, sigma)
-            plt.subplot(5, 5, i*5 + (j+1))
-            plt.imshow(img2)
-    plt.show()
-
-
-def plot_layer_activations(layer, data, output_fname="../results/layerActivation.png"):
-    pred = lasagne.layers.get_output(layer, data).eval()
-    n_channels = pred.shape[1]
-    plt.figure(figsize=(12, 12))
-    plots_per_axis = int(np.ceil(np.sqrt(n_channels)))
-    for i in xrange(n_channels):
-        plt.subplot(plots_per_axis, plots_per_axis, i+1)
-        plt.imshow(pred[0, i, :, :], cmap="gray", interpolation="nearest")
-    plt.savefig(output_fname)
-    plt.close()
+    import os
+    import SimpleITK as sitk
+    import matplotlib.pyplot as plt
+    folder = "/home/fabian/datasets/Hirntumor_von_David/"
+    for i in range(150):
+        if os.path.isdir(os.path.join(folder, "%03.0d"%i)):
+            if os.path.isfile(os.path.join(folder, "%03.0f"%i, "FLAIR_m2_bc_ws.nii.gz")):
+                img = correct_nans(sitk.GetArrayFromImage(sitk.ReadImage(os.path.join(folder, "%03.0d"%i, "FLAIR_m2_bc_ws.nii.gz"))))
+                plt.figure()
+                plt.hist(img[img!=img[0,0,0]].ravel(), 100)
+                plt.savefig(folder+"%03.0f_flair_ws_histogram.png"%i)
+                plt.close()
 

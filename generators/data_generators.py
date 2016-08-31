@@ -3,7 +3,12 @@ import numpy as np
 import IPython
 import os.path as path
 from numpy import memmap
-
+import sys
+sys.path.append("../utils")
+from general_utils import find_entries_in_array
+from copy import deepcopy
+from scipy.ndimage import interpolation
+from scipy.ndimage import map_coordinates
 
 def memmapGenerator(array_neg, array_pos, BATCH_SIZE, n_elements_pos=None, n_elements_neg=None):
     np.random.seed()
@@ -358,3 +363,105 @@ def memmapGenerator_t1km_flair_adc_cbv_markers(array_neg, array_pos, BATCH_SIZE,
         labels = labels[idx_for_shuffle]
         yield data, seg, labels, markers
 
+def memmapGenerator_allInOne_markers(array_data, array_gt, BATCH_SIZE, validation_patients, marker="RTK2", mode="train", shuffle=True):
+    np.random.seed()
+    assert mode in ["train", "test"]
+    assert marker in ["RTK2", "MGMT", "EGFR"]
+    if marker == "RTK2":
+        marker_idx = 1
+    if marker == "MGMT":
+        marker_idx = 2
+    if marker == "EGFR":
+        marker_idx = 3
+    patient_ids = np.array(array_gt[:, 0])
+    data_idx = find_entries_in_array(validation_patients, patient_ids)
+    if mode == "train":
+        data_idx = ~data_idx
+    data_idx = np.where(data_idx)[0]
+    all_idx_pos = data_idx[array_gt[data_idx, marker_idx] == 1]
+    all_idx_neg = data_idx[array_gt[data_idx, marker_idx] == 0]
+    data_shape = list(array_data.shape)
+    data_shape[0] = BATCH_SIZE
+    data_shape[1] -= 3
+    seg_shape = deepcopy(data_shape)
+    seg_shape[1] = 3
+    while True:
+        idx_pos = np.random.choice(all_idx_pos, int(BATCH_SIZE/2.))
+        idx_neg = np.random.choice(all_idx_neg, int(BATCH_SIZE/2.))
+        data = np.zeros(data_shape, dtype=np.float32)
+        seg = np.zeros(seg_shape, dtype=np.int32)
+        labels = np.zeros(BATCH_SIZE)
+        data[:len(idx_pos)] = array_data[idx_pos, :-3]
+        data[len(idx_pos):] = array_data[idx_neg, :-3]
+        seg[:len(idx_pos)] = array_data[idx_pos, -3:]
+        seg[len(idx_pos):] = array_data[idx_neg, -3:]
+        labels[:len(idx_pos)] = 1
+        labels[len(idx_pos):] = 0
+        if shuffle:
+            idx_for_shuffle = np.arange(len(idx_neg)+len(idx_neg))
+            np.random.shuffle(idx_for_shuffle)
+            data = data[idx_for_shuffle]
+            seg = seg[idx_for_shuffle]
+            labels = labels[idx_for_shuffle]
+        yield data, seg, labels
+
+
+def memmapGenerator_allInOne_segmentation(array_data, array_gt, BATCH_SIZE, validation_patients, mode="train", ignore=[], shuffle=True):
+    np.random.seed()
+    assert mode in ["train", "test"]
+    patient_ids = np.array(array_gt[:, 0])
+    data_idx = find_entries_in_array(validation_patients, patient_ids)
+    if mode == "train":
+        data_idx = ~data_idx
+    data_idx = np.where(data_idx)[0]
+    if len(ignore) > 0:
+        data_idx = data_idx[~find_entries_in_array(ignore, array_gt[data_idx, 0])]
+    while True:
+        idx = np.random.choice(data_idx, BATCH_SIZE)
+        data = np.array(array_data[idx, :-5]).astype(np.float32)
+        seg = np.array(array_data[idx, -5:]).astype(np.float32)
+        if shuffle:
+            idx_for_shuffle = np.arange(len(idx))
+            np.random.shuffle(idx_for_shuffle)
+            data = data[idx_for_shuffle]
+            seg = seg[idx_for_shuffle]
+        yield data, seg, None
+
+def memmapGenerator_allInOne_segmentation_lossSampling(array_data, array_gt, BATCH_SIZE, validation_patients, mode="train", ignore=[], losses=None, num_batches=None):
+    # patches with higher loss are sampled more frequently
+    if num_batches is None:
+        num_batches = 1e100
+    batches_generated = 0
+    np.random.seed()
+    assert mode in ["train", "test"]
+    newshape_gt = list(array_gt.shape)
+    newshape_gt[1] += 1
+    array_gt2 = np.zeros(tuple(newshape_gt))
+    array_gt2[:, :-1] = array_gt
+    if losses is None:
+        array_gt2[:, -1] = 1. / float(len(array_gt2))
+    else:
+        assert len(losses) == len(array_gt2)
+        losses[losses < np.mean(losses)/10.] = np.mean(losses)/10.
+        array_gt2[:, -1] = losses
+    patient_ids = np.array(array_gt2[:, 0])
+    data_idx = find_entries_in_array(validation_patients, patient_ids)
+    if mode == "train":
+        data_idx = ~data_idx
+    data_idx = np.where(data_idx)[0]
+    if len(ignore) > 0:
+        data_idx = data_idx[~find_entries_in_array(ignore, array_gt2[data_idx, 0])]
+    # probabilities have to sum to one...
+    array_gt2[data_idx, -1] = array_gt2[data_idx, -1] / np.sum(array_gt2[data_idx, -1])
+    while batches_generated < num_batches:
+        idx = np.random.choice(data_idx, BATCH_SIZE, p=array_gt2[data_idx, -1])
+        data = np.array(array_data[idx, :-5]).astype(np.float32)
+        seg = np.array(array_data[idx, -5:]).astype(np.float32)
+        batches_generated += 1
+        yield data, seg, idx
+
+def update_loss_per_sample(loss_old, losses):
+    # computes a moving average on the losses
+    avg_loss = np.mean(losses[:, 1])
+    loss_new = (loss_old + losses/avg_loss) / 2.
+    return loss_new

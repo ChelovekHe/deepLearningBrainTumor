@@ -13,7 +13,7 @@ from collections import OrderedDict
 import sys
 import lmdb
 from utils import threaded_generator, printLosses, validate_result, plot_layer_weights
-from memmap_negPos_batchgen import memmapGenerator, memmapGeneratorDataAugm
+from data_generators import memmapGenerator, memmapGeneratorDataAugm
 import cPickle
 from lasagne.layers import batch_norm
 
@@ -26,7 +26,7 @@ n_neg_val = memmap_properties["val_neg"]
 n_training_samples = memmap_properties["train_total"]
 n_val_samples = memmap_properties["val_total"]
 
-EXPERIMENT_NAME = "classifyPatches_memmap_v0.4.py"
+EXPERIMENT_NAME = "classifyPatches_memmap_v0.3.py"
 BATCH_SIZE = 100
 
 def build_net():
@@ -35,35 +35,42 @@ def build_net():
     net['input'] = InputLayer((BATCH_SIZE, 1, 128, 128))
 
     net['conv_1_1'] = batch_norm(ConvLayer(net['input'], 12, 7, pad='same', stride=1, nonlinearity=lasagne.nonlinearities.elu))
-    # net['conv_1_1_do'] = DropoutLayer(net['conv_1_1'], p=0.1)
-    net['conv_1_2'] = batch_norm(ConvLayer(net['conv_1_1'], 12, 5, pad='same', stride=1, nonlinearity=lasagne.nonlinearities.elu))
-    # net['conv_1_2_do'] = DropoutLayer(net['conv_1_2'], p=0.1)
+    net['conv_1_1_do'] = DropoutLayer(net['conv_1_1'], p=0.1)
+    net['conv_1_2'] = batch_norm(ConvLayer(net['conv_1_1_do'], 12, 5, pad='same', stride=1, nonlinearity=lasagne.nonlinearities.elu))
     net['maxPool_1_1'] = Pool2DLayer(net['conv_1_2'], 2, mode='max')
+    net['conv_1_2_do'] = DropoutLayer(net['maxPool_1_1'], p=0.1)
 
-    net['conv_2_1'] = batch_norm(ConvLayer(net['maxPool_1_1'], 24, 3, pad='same', stride=1, nonlinearity=lasagne.nonlinearities.elu))
-    # net['conv_2_1_do'] = DropoutLayer(net['conv_2_1'], p=0.2)
-    net['conv_2_2'] = batch_norm(ConvLayer(net['conv_2_1'], 24, 3, pad='same', stride=1, nonlinearity=lasagne.nonlinearities.elu))
-    # net['conv_2_2_do'] = DropoutLayer(net['conv_2_2'], p=0.2)
+    net['conv_2_1'] = batch_norm(ConvLayer(net['conv_1_2_do'], 24, 3, pad='same', stride=1, nonlinearity=lasagne.nonlinearities.elu))
+    net['conv_2_1_do'] = DropoutLayer(net['conv_2_1'], p=0.2)
+    net['conv_2_2'] = batch_norm(ConvLayer(net['conv_2_1_do'], 24, 3, pad='same', stride=1, nonlinearity=lasagne.nonlinearities.elu))
     net['maxPool_2_1'] = Pool2DLayer(net['conv_2_2'], 2, mode='max')
+    net['conv_2_2_do'] = DropoutLayer(net['maxPool_2_1'], p=0.2)
 
-    net['conv_3_1'] = batch_norm(ConvLayer(net['maxPool_2_1'], 48, 3, pad=1, stride=1, nonlinearity=lasagne.nonlinearities.elu))
-    # net['conv_3_1_do'] = DropoutLayer(net['conv_3_1'], p=0.3)
+    net['conv_3_1'] = batch_norm(ConvLayer(net['conv_2_2_do'], 48, 3, pad=1, stride=1, nonlinearity=lasagne.nonlinearities.elu))
     net['maxPool_3_1'] = Pool2DLayer(net['conv_3_1'], 2, mode='max')
-    net['conv_3_2'] = batch_norm(ConvLayer(net['maxPool_3_1'], 48, 3, pad=1, stride=1, nonlinearity=lasagne.nonlinearities.elu))
-    # net['conv_3_2_do'] = DropoutLayer(net['conv_3_2'], p=0.3)
+    net['conv_3_1_do'] = DropoutLayer(net['maxPool_3_1'], p=0.3)
+
+    net['conv_3_2'] = batch_norm(ConvLayer(net['conv_3_1_do'], 48, 3, pad=1, stride=1, nonlinearity=lasagne.nonlinearities.elu))
     net['maxPool_3_2'] = Pool2DLayer(net['conv_3_2'], 2, mode='max')
-    net['conv_3_3'] = batch_norm(ConvLayer(net['maxPool_3_2'], 48, 3, pad=1, stride=1, nonlinearity=lasagne.nonlinearities.elu))
-    # net['conv_3_3_do'] = DropoutLayer(net['conv_3_3'], p=0.3)
+    net['conv_3_2_do'] = DropoutLayer(net['maxPool_3_2'], p=0.3)
+
+    net['conv_3_3'] = batch_norm(ConvLayer(net['conv_3_2_do'], 48, 3, pad=1, stride=1, nonlinearity=lasagne.nonlinearities.elu))
     net['maxPool_3_3'] = Pool2DLayer(net['conv_3_3'], 2, mode='max')
+    net['conv_3_3_do'] = DropoutLayer(net['maxPool_3_3'], p=0.3)
 
-    net['fc_4'] = batch_norm(DenseLayer(net['maxPool_3_3'], 200, nonlinearity=lasagne.nonlinearities.elu))
-    # net['fc_4_dropOut'] = DropoutLayer(net['fc_4'], p=0.5)
+    net['fc_4'] = batch_norm(DenseLayer(net['conv_3_3_do'], 200, nonlinearity=lasagne.nonlinearities.elu))
+    net['fc_4_dropOut'] = DropoutLayer(net['fc_4'], p=0.5)
 
-    net['prob'] = batch_norm(DenseLayer(net['fc_4'], 2, nonlinearity=lasagne.nonlinearities.softmax))
+    net['prob'] = batch_norm(DenseLayer(net['fc_4_dropOut'], 2, nonlinearity=lasagne.nonlinearities.softmax))
 
     return net
 
 net = build_net()
+
+with open("../results/%s_Params.pkl"%EXPERIMENT_NAME, 'r') as f:
+    params = cPickle.load(f)
+    lasagne.layers.set_all_param_values(net['prob'], params)
+
 
 n_batches_per_epoch = np.floor(n_training_samples/float(BATCH_SIZE))
 n_test_batches = np.floor(n_val_samples/float(BATCH_SIZE))

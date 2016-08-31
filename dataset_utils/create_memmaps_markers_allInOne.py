@@ -15,11 +15,10 @@ import threading
 from multiprocessing import Pool
 import sys
 sys.path.append("experiments/code")
-from utils import create_random_rotation, create_matrix_rotation_y, create_matrix_rotation_z, create_matrix_rotation_x
-
+from dataset_utils import create_random_rotation, create_matrix_rotation_y, create_matrix_rotation_z, create_matrix_rotation_x
 
 PATCH_SIZE = 128
-PERCENT_VAL = 0.15 # expected percentage of validation samples
+PERCENT_VAL = 0.15 # expected percentage of positive samples
 
 def create_default_slice():
     slice = np.zeros((PATCH_SIZE**2, 3))
@@ -31,28 +30,20 @@ def create_default_slice():
     return slice
 
 
-expected_n_samples = 300000
+expected_n_samples = 120000
+# it is actually 90k samples but these 90k distribute between the two classes, lets just hope 60k is enough
 
 patient_markers = np.loadtxt("patient_markers.txt").astype(np.int32)
 
-train_neg_shape = (expected_n_samples, 18, PATCH_SIZE, PATCH_SIZE)
-train_pos_shape = (expected_n_samples*0.5, 18, PATCH_SIZE, PATCH_SIZE)
-val_neg_shape = (expected_n_samples * PERCENT_VAL, 18, PATCH_SIZE, PATCH_SIZE)
-val_pos_shape = (expected_n_samples * 0.5 * PERCENT_VAL, 18, PATCH_SIZE, PATCH_SIZE)
+train_shape = (expected_n_samples, 18, PATCH_SIZE, PATCH_SIZE)
+info_memmap_shape = (expected_n_samples, 4)
 
-memmap_name = "patchClassification_ws_resampled_t1km_flair_adc_cbv_rot_PC"
+memmap_name = "patchClassification_ws_resampled_t1km_flair_adc_cbv_markers_allInOne"
 
-train_neg_memmap = memmap("/home/fabian/datasets/Hirntumor_von_David/experiments/data/%s_train_neg.memmap" % (memmap_name), dtype=np.float32, mode="w+", shape=train_neg_shape)
-train_pos_memmap = memmap("/home/fabian/datasets/Hirntumor_von_David/experiments/data/%s_train_pos.memmap" % (memmap_name), dtype=np.float32, mode="w+", shape=train_pos_shape)
-val_neg_memmap = memmap("/home/fabian/datasets/Hirntumor_von_David/experiments/data/%s_val_neg.memmap" % (memmap_name), dtype=np.float32, mode="w+", shape=val_neg_shape)
-val_pos_memmap = memmap("/home/fabian/datasets/Hirntumor_von_David/experiments/data/%s_val_pos.memmap" % (memmap_name), dtype=np.float32, mode="w+", shape=val_pos_shape)
+memmap_data = memmap("%s.memmap" % (memmap_name), dtype=np.float32, mode="w+", shape=train_shape)
+memmap_gt = memmap("%s_info.memmap" % (memmap_name), dtype=np.float32, mode="w+", shape=info_memmap_shape)
 
-
-n_negative_train = 0
-n_negative_val = 0
-n_positive_train = 0
-n_positive_val = 0
-
+data_ctr = 0
 
 path = "/home/fabian/datasets/Hirntumor_von_David/"
 subdirs = [d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))]
@@ -73,13 +64,9 @@ def correct_nans(image):
             t1_image_corr[tuple(coord)] = np.max(region[~np.isnan(region)])
     return t1_image_corr
 
-val_dirs = ['001', '002', '004', '005', '006', '007', '008', '009', '011', '012', '013', '014', '015', '016']
 labels = []
 valid_patient_ids = []
 for curr_dir in subdirs:
-    test = False
-    if curr_dir in val_dirs:
-        test = True
     patient_id = os.path.split(curr_dir)[-1]
     print patient_id
     # check if image exists
@@ -227,26 +214,10 @@ for curr_dir in subdirs:
 
     # randomly sample 30 locations around the tumor center (gaussian distributed)
     print "generating training examples..."
-
-    n_random_locations = 300
-    n_random_rotations = 8
-
-    from scipy import ndimage
-    # we do not check for too much background because we erode the brain mask prior to generating training samples
-    brain_mask_eroded = ndimage.morphology.binary_erosion(brain_mask, iterations = 10)
-    new_brain_idx = np.where(brain_mask_eroded == 1)
-
-    for i in xrange(n_random_locations):
-        print i/float(n_random_locations)*100, " %"
-
-        # make sure we get a bit more tumor samples (compared to uniform sampling over brain region)
-        if np.random.random() < 0.25:
-            center = (np.random.normal(tumor_center[0], tumor_size[0]/3.), np.random.normal(tumor_center[1], tumor_size[1]/3.), np.random.normal(tumor_center[2], tumor_size[2]/3.))
-            center_downsampled = np.array(center).astype(float) / np.array(t1km_image.shape) * np.array(new_shape_downsampled)
-        else:
-            idx = np.random.choice(len(new_brain_idx[0]), 1)[0]
-            center = (new_brain_idx[0][idx], new_brain_idx[1][idx], new_brain_idx[2][idx])
-            center_downsampled = np.array(center).astype(float) / np.array(t1km_image.shape) * np.array(new_shape_downsampled)
+    for i in xrange(30):
+        print i/30.*100, " %"
+        center = (np.random.normal(tumor_center[0], tumor_size[0]/15.), np.random.normal(tumor_center[1], tumor_size[1]/15.), np.random.normal(tumor_center[2], tumor_size[2]/15.))
+        center_downsampled = np.array(center) / np.array(t1km_image.shape) * np.array(new_shape_downsampled)
 
         # just a helper function to get multiprocessing to work
         def tmp_create_rotated_train_data(ignore_me = None):
@@ -309,46 +280,49 @@ for curr_dir in subdirs:
                     slice_seg_1,
                     slice_seg_2)
 
-        pool = Pool(n_random_rotations)
-        result = pool.map(tmp_create_rotated_train_data, [(), (), (), (), (), (), (), ()])
+
+        pool = Pool(10)
+        result = pool.map(tmp_create_rotated_train_data, [(), (), (), (), (), (), (), (), (), (),
+                                                          (), (), (), (), (), (), (), (), (), (),
+                                                          (), (), (), (), (), (), (), (), (), ()
+                                                          ])
         pool.close()
         pool.join()
 
         # result = (tmp_create_rotated_train_data(), tmp_create_rotated_train_data())
-        for res in result:
-            perc_tumor = float(np.sum(res[-3]>1) + np.sum(res[-2]>1) + np.sum(res[-1]>1)) / (PATCH_SIZE**2 * 3.)
-            if not test:
-                if perc_tumor == 0:
-                    train_neg_memmap[n_negative_train:n_negative_train+1] = res
-                    n_negative_train += 1
-                elif perc_tumor > 0.08:
-                    train_pos_memmap[n_positive_train:n_positive_train+1] = res
-                    n_positive_train += 1
-            else:
-                if perc_tumor == 0:
-                    val_neg_memmap[n_negative_val:n_negative_val+1] = res
-                    n_negative_val += 1
-                elif perc_tumor > 0.08:
-                    val_pos_memmap[n_positive_val:n_positive_val+1] = res
-                    n_positive_val += 1
 
+        memmap_data[data_ctr:data_ctr+30] = result
+        memmap_gt[data_ctr:data_ctr+30, 0] = np.ones(30) * patient_markers[idx_in_patient_markers][0]
 
-    print "train (total, pos, neg): ", n_negative_train + n_positive_train, n_positive_train, n_negative_train
-    print "test (total, pos, neg): ", n_positive_val + n_negative_val, n_positive_val, n_negative_val
+        if patient_markers[idx_in_patient_markers][1] == 0:
+            memmap_gt[data_ctr:data_ctr+30, 1] = np.zeros(30)
+        elif patient_markers[idx_in_patient_markers][1] == 1:
+            memmap_gt[data_ctr:data_ctr+30, 1] = np.ones(30)
+        elif patient_markers[idx_in_patient_markers][1] == -1:
+            memmap_gt[data_ctr:data_ctr+30, 1] = np.ones(30) * -1
 
+        if patient_markers[idx_in_patient_markers][2] == 0:
+            memmap_gt[data_ctr:data_ctr+30, 2] = np.zeros(30)
+        elif patient_markers[idx_in_patient_markers][2] == 1:
+            memmap_gt[data_ctr:data_ctr+30, 2] = np.ones(30)
+        elif patient_markers[idx_in_patient_markers][2] == -1:
+            memmap_gt[data_ctr:data_ctr+30, 2] = np.ones(30) * -1
+
+        if patient_markers[idx_in_patient_markers][3] == 0:
+            memmap_gt[data_ctr:data_ctr+30, 3] = np.zeros(30)
+        elif patient_markers[idx_in_patient_markers][3] == 1:
+            memmap_gt[data_ctr:data_ctr+30, 3] = np.ones(30)
+        elif patient_markers[idx_in_patient_markers][3] == -1:
+            memmap_gt[data_ctr:data_ctr+30, 3] = np.ones(30) * -1
+        data_ctr += 30
+
+    print "data_ctr: ", data_ctr
 
 
 my_dict = {
-    "train_total" : n_negative_train + n_positive_train,
-    "train_pos": n_positive_train,
-    "train_neg": n_negative_train,
-    "val_total" : n_positive_val + n_negative_val,
-    "val_pos": n_positive_val,
-    "val_neg": n_negative_val,
-    "train_neg_shape": train_neg_shape,
-    "train_pos_shape": train_pos_shape,
-    "val_neg_shape": val_neg_shape,
-    "val_pos_shape": val_pos_shape
+    "n_data" : data_ctr,
+    "train_neg_shape": train_shape,
+    "info_shape": info_memmap_shape
 
 }
 with open("%s_properties.pkl" % (memmap_name), 'w') as f:

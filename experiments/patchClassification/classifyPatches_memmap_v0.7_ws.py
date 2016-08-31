@@ -16,11 +16,16 @@ from collections import OrderedDict
 import sys
 import lmdb
 from utils import threaded_generator, printLosses, validate_result, plot_layer_weights
-from memmap_negPos_batchgen import memmapGenerator, memmapGeneratorDataAugm
+from data_generators import memmapGenerator, memmapGeneratorDataAugm
 import cPickle
 from lasagne.layers import batch_norm
 
-with open("../data/patchClassification_memmap_properties.pkl", 'r') as f:
+
+EXPERIMENT_NAME = "classifyPatches_memmap_v0.7_ws_resample_neu"
+memmap_name = "patchClassification_ws_resampled"
+BATCH_SIZE = 70
+
+with open("../data/%s_properties.pkl" % memmap_name, 'r') as f:
     memmap_properties = cPickle.load(f)
 n_pos_train = memmap_properties["train_pos"]
 n_neg_train = memmap_properties["train_neg"]
@@ -29,8 +34,7 @@ n_neg_val = memmap_properties["val_neg"]
 n_training_samples = memmap_properties["train_total"]
 n_val_samples = memmap_properties["val_total"]
 
-EXPERIMENT_NAME = "classifyPatches_memmap_v0.7_old_memmap.py"
-BATCH_SIZE = 70
+
 
 
 def build_cnn(input_var=None, n=5):
@@ -138,10 +142,10 @@ pred_fn = theano.function([x_sym], prediction_test)
 
 from numpy import memmap
 
-train_pos_memmap = memmap("../data/patchClassification_train_pos.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["train_pos_shape"])
-train_neg_memmap = memmap("../data/patchClassification_train_neg.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["train_neg_shape"])
-val_pos_memmap = memmap("../data/patchClassification_val_pos.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["val_pos_shape"])
-val_neg_memmap = memmap("../data/patchClassification_val_neg.memmap", dtype=np.float32, mode="r+", shape=memmap_properties["val_neg_shape"])
+train_pos_memmap = memmap("../data/%s_train_pos.memmap" % memmap_name, dtype=np.float32, mode="r", shape=memmap_properties["train_pos_shape"])
+train_neg_memmap = memmap("../data/%s_train_neg.memmap" % memmap_name, dtype=np.float32, mode="r", shape=memmap_properties["train_neg_shape"])
+val_pos_memmap = memmap("../data/%s_val_pos.memmap" % memmap_name, dtype=np.float32, mode="r", shape=memmap_properties["val_pos_shape"])
+val_neg_memmap = memmap("../data/%s_val_neg.memmap" % memmap_name, dtype=np.float32, mode="r", shape=memmap_properties["val_neg_shape"])
 
 
 all_training_losses = []

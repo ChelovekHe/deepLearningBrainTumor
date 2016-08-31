@@ -48,3 +48,30 @@ memmap_properties["val_neg_shape"] = new_val_neg_shape
 
 with open("%s_properties.pkl" % new_memmap_name, 'w') as f:
     cPickle.dump(memmap_properties, f)
+
+
+memmap_name = "patchSegmentation_allInOne_ws_t1km_flair_adc_cbv"
+with open("/media/fabian/My Book/datasets/%s_properties.pkl" % (memmap_name), 'r') as f:
+    my_dict = cPickle.load(f)
+
+data_ctr = my_dict['n_data']
+train_shape = my_dict['train_neg_shape']
+info_memmap_shape = my_dict['info_shape']
+
+memmap_data_old = memmap("/media/fabian/My Book/datasets/%s.memmap" % (memmap_name), dtype=np.float32, mode="r", shape=train_shape)
+memmap_gt_old = memmap("/media/fabian/My Book/datasets/%s_info.memmap" % (memmap_name), dtype=np.float32, mode="r", shape=info_memmap_shape)
+
+new_shape = list(train_shape)
+new_info_shape = list(info_memmap_shape)
+new_shape[0] = data_ctr
+new_info_shape[0] = data_ctr
+memmap_data_new = memmap("/media/fabian/My Book/datasets/%s_resized.memmap" % (memmap_name), dtype=np.float32, mode="w+", shape=tuple(new_shape))
+memmap_gt_new = memmap("/media/fabian/My Book/datasets/%s_info_resized.memmap" % (memmap_name), dtype=np.float32, mode="w+", shape=tuple(new_info_shape))
+
+memmap_data_new[:] = memmap_data_old[:data_ctr]
+memmap_gt_new[:] = memmap_gt_old[:data_ctr]
+
+my_dict['train_neg_shape'] = tuple(new_shape)
+my_dict['info_shape'] = tuple(new_info_shape)
+with open("/media/fabian/My Book/datasets/%s_resized_properties.pkl" % (memmap_name), 'w') as f:
+    cPickle.dump(my_dict, f)

@@ -15,7 +15,7 @@ from collections import OrderedDict
 import sys
 import lmdb
 from utils import threaded_generator, printLosses, validate_result, plot_layer_weights
-from memmap_negPos_batchgen import memmapGenerator, memmapGeneratorDataAugm
+from data_generators import memmapGenerator, memmapGeneratorDataAugm
 import cPickle
 from lasagne.layers import batch_norm
 

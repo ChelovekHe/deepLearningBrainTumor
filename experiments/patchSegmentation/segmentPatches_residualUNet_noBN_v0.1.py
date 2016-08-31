@@ -9,17 +9,17 @@ from lasagne.layers import FlattenLayer
 import cPickle as pickle
 import sys
 from utils import *
-from memmap_negPos_batchgen import memmapGenerator, memmapGeneratorDataAugm, memmapGenerator_t1km_flair, memmapGeneratorDataAugm_t1km_flair, memmapGeneratorDataAugm_t1km_flair_adc_cbv, memmapGenerator_t1km_flair_adc_cbv, memmapGenerator_tumorClassRot
+from utils_plotting import *
+from data_generators import memmapGenerator, memmapGeneratorDataAugm, memmapGenerator_t1km_flair, memmapGeneratorDataAugm_t1km_flair, memmapGeneratorDataAugm_t1km_flair_adc_cbv, memmapGenerator_t1km_flair_adc_cbv, memmapGenerator_tumorClassRot
 import cPickle
 from lasagne.layers import batch_norm
 from neural_networks import *
-from experimentsWithMPQueue import multi_threaded_generator
 
 sys.setrecursionlimit(2000)
 
-EXPERIMENT_NAME = "segment_tumor_v0.1_deepResidualUnet_n_1"
+EXPERIMENT_NAME = "segment_tumor_v0.1_residualUnet_noBN"
 memmap_name = "patchClassification_ws_resampled_t1km_flair_adc_cbv_new"
-BATCH_SIZE = 26
+BATCH_SIZE = 60
 
 with open("/media/fabian/DeepLearningData/datasets/%s_properties.pkl" % memmap_name, 'r') as f:
     memmap_properties = cPickle.load(f)
@@ -31,14 +31,14 @@ n_training_samples = memmap_properties["train_total"]
 n_val_samples = memmap_properties["val_total"]
 
 
-net = build_deep_residual_UNet(4, BATCH_SIZE, num_output_classes=4, base_n_filters=16, n_res_blocks=1)
+net = build_residual_UNet_noBN(4, BATCH_SIZE, num_output_classes=4, base_n_filters=16)
 output_layer = net["output"]
 
-'''params_from = EXPERIMENT_NAME
-with open("../results/%s_Params_ep0.pkl"%params_from, 'r') as f:
+with open("../results/segment_tumor_v0.1_residualUnet_noBN_Params_ep2.pkl", 'r') as f:
     params = cPickle.load(f)
-    lasagne.layers.set_all_param_values(output_layer, params)'''
-
+    lasagne.layers.set_all_param_values(output_layer, params)
+with open("../results/segment_tumor_v0.1_residualUnet_noBN_allLossesNAccur_ep2.pkl", 'r') as f:
+    [all_training_losses, all_validation_losses, all_validation_accuracies] = cPickle.load(f)
 
 n_batches_per_epoch = np.floor(n_training_samples/float(BATCH_SIZE))
 n_test_batches = np.floor(n_val_samples/float(BATCH_SIZE))
@@ -116,7 +116,7 @@ all_training_accs = []
     [all_training_losses, all_training_accs, all_validation_losses, all_validation_accuracies] = cPickle.load(f)'''
 
 n_epochs = 10
-for epoch in range(0, n_epochs):
+for epoch in range(2, n_epochs):
     print "epoch: ", epoch
     train_loss = 0
     train_acc_tmp = 0
@@ -166,7 +166,7 @@ for epoch in range(0, n_epochs):
     with open("../results/%s_Params_ep%d.pkl" % (EXPERIMENT_NAME, epoch), 'w') as f:
         cPickle.dump(lasagne.layers.get_all_param_values(output_layer), f)
     with open("../results/%s_allLossesNAccur_ep%d.pkl"% (EXPERIMENT_NAME, epoch), 'w') as f:
-        cPickle.dump([all_training_losses, all_validation_losses, all_validation_accuracies], f)
+        cPickle.dump([all_training_losses, all_training_accs, all_validation_losses, all_validation_accuracies], f)
 
 import cPickle
 with open("../results/%s_Params.pkl"%EXPERIMENT_NAME, 'w') as f:
@@ -180,5 +180,5 @@ for data, seg, labels in threaded_generator(memmapGenerator_t1km_flair_adc_cbv(v
     pred = pred_fn(data).argmax(-1).reshape(BATCH_SIZE, 1, 128, 128)
     img_ctr = show_segmentation_results(data, seg, pred, img_ctr=img_ctr)
     epoch_ctr += 1
-    if epoch_ctr >= 20:
+    if epoch_ctr >= 8:
         break

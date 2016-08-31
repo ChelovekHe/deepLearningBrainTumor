@@ -87,9 +87,3 @@ ENV/
 
 # Rope project settings
 .ropeproject
-
-*.memmap
-*.png
-*.zip
-*.npy
-*.pkl
