@@ -70,10 +70,7 @@ def build_deep_residual_UNet(n_input_channels=1, BATCH_SIZE=None, num_output_cla
 
     net = OrderedDict()
     l = net['input'] = InputLayer((BATCH_SIZE, n_input_channels, input_dim[0], input_dim[1]))
-    if doBN:
-        l = net['conv_1'] = batch_norm(ConvLayer(l, num_filters=base_n_filters, filter_size=(3,3), stride=(1,1), nonlinearity=rectify, pad='same', W=lasagne.init.HeNormal(gain='relu'), flip_filters=False))
-    else:
-        l = net['conv_1'] = ConvLayer(l, num_filters=base_n_filters, filter_size=(3,3), stride=(1,1), nonlinearity=rectify, pad='same', W=lasagne.init.HeNormal(gain='relu'), flip_filters=False)
+    l = residualBlock(l, False, True, base_n_filters)
 
     # = residual, increase dim, projection true
     l = net['contr_block_1_1'] = residualBlock(l, False, True)
@@ -132,9 +129,9 @@ def build_deep_residual_UNet(n_input_channels=1, BATCH_SIZE=None, num_output_cla
     for i in xrange(n_res_blocks):
         l = net['expand_4_%d'%(i+2)] = residualBlock(l, False, True)
 
-    l = net['segLayer'] = ConvLayer(l, num_output_classes, 1, nonlinearity=None)
+    l = net['output_segmentation'] = ConvLayer(l, num_output_classes, 1, nonlinearity=None)
     l = net['dimshuffle'] = DimshuffleLayer(l, (1, 0, 2, 3))
     l = net['reshapeSeg'] = ReshapeLayer(l, (num_output_classes, -1))
     l = net['dimshuffle2'] = DimshuffleLayer(l, (1, 0))
-    net['output'] = NonlinearityLayer(l, nonlinearity=lasagne.nonlinearities.softmax)
+    net['output_flattened'] = NonlinearityLayer(l, nonlinearity=lasagne.nonlinearities.softmax)
     return net

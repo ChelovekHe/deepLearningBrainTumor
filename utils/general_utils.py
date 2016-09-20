@@ -8,6 +8,7 @@ from scipy.ndimage.interpolation import map_coordinates
 import cPickle
 import lasagne
 import theano
+import theano.tensor
 import os
 import SimpleITK as sitk
 from multiprocessing import Pool as ThreadPool
@@ -19,6 +20,45 @@ sys.path.append("../neural_networks/")
 sys.path.append("../dataset_utils/")
 import UNet
 from dataset_utility import load_patient_resampled
+from sklearn.metrics import roc_auc_score
+
+def calculate_validation_metrics(probas_pred, image_gt, class_labels=None, num_classes=5):
+    classes = np.arange(probas_pred.shape[-1])
+    # determine valid classes (those that actually appear in image_gt). Some images may miss some classes
+    classes = [c for c in classes if np.sum(image_gt==c) != 0]
+    image_pred = probas_pred.argmax(-1)
+    assert image_gt.shape == image_pred.shape
+    accuracy = np.sum(image_gt == image_pred) / float(image_pred.size)
+    class_metrics = {}
+    y_true = convert_seg_flat_to_binary_label_indicator_array(image_gt.ravel(), num_classes).astype(int)[:, classes]
+    y_pred = probas_pred.transpose(3, 0, 1, 2).reshape(num_classes, -1).transpose(1, 0)[:, classes]
+    scores = roc_auc_score(y_true, y_pred, None)
+    for i, c in enumerate(classes):
+        true_positives = np.sum((image_gt == c) & (image_pred == c))
+        true_negatives = np.sum((image_gt != c) & (image_pred != c))
+        false_positives = np.sum((image_gt != c) & (image_pred == c))
+        false_negatives = np.sum((image_gt == c) & (image_pred != c))
+        specificity = true_negatives / float(true_negatives + false_positives)
+        sensitivity = true_positives / float(true_positives + false_negatives)
+        f1_score = 2. * true_positives / float(2 * true_positives + false_positives + false_negatives)
+        jaccard_index = np.sum((image_pred == c) & (image_gt == c)) / float(np.sum((image_gt == c) | (image_pred == c)))
+        dice_score = 2. * np.sum((image_pred == c) & (image_gt == c)) / float(np.sum(image_gt == c) + np.sum(image_pred == c))
+        label = c
+        if class_labels is not None and c in class_labels.keys():
+            label = class_labels[c]
+        class_metrics[label] = {'specificity': specificity,
+                                'sensitivity': sensitivity,
+                                'f1_score': f1_score,
+                                'jaccard_index': jaccard_index,
+                                'dice_score': dice_score,
+                                'roc_auc': scores[i]}
+    return accuracy, class_metrics
+
+def convert_seg_flat_to_binary_label_indicator_array(seg_flat, num_classes=5):
+    seg2 = np.zeros((len(seg_flat), num_classes))
+    for i in xrange(seg2.shape[0]):
+        seg2[i, int(seg_flat[i])] = 1
+    return seg2
 
 
 def predict_whole_dataset(patient_id):
@@ -38,8 +78,7 @@ def predict_whole_dataset(patient_id):
     # uild_UNet(n_input_channels=1, BATCH_SIZE=None, num_output_classes=2, pad='same', nonlinearity=lasagne.nonlinearities.elu, input_dim=(128, 128), base_n_filters=64, do_dropout=False):
     net = UNet.build_UNet(20, 1, 5, input_dim=(t1km_img.shape[1], t1km_img.shape[2]), base_n_filters=16)
     output_layer = net["output_flattened"]
-
-    with open("../../../results/segment_tumor_v0.1_Unet_Params_ep1.pkl", 'r') as f:
+    with open("/home/fabian/datasets/Hirntumor_von_David/experiments/results/segment_tumor_v0.2_UNet_lossSampling/segment_tumor_v0.2_Unet_lossSampling_Params_ep30.pkl", 'r') as f:
         params = cPickle.load(f)
         lasagne.layers.set_all_param_values(output_layer, params)
 
@@ -66,16 +105,25 @@ def predict_whole_dataset(patient_id):
     for i in xrange(t1km_img.shape[0]):
         res[i][0,0:5] = [0,1,2,3,4]
         seg_combined[i][0,0:5] = [0,1,2,3,4]
-        plt.figure(figsize=(18,6))
-        plt.subplot(1,3,1)
+        errors = seg_combined[i] == res[i]
+        errors[0, 0:2] = [True, False]
+        plt.figure(figsize=(24,12))
+        plt.subplot(2,4,1)
+        plt.imshow(t1km_img[i], cmap="gray")
+        plt.subplot(2,4,2)
+        plt.imshow(flair_img[i], cmap="gray")
+        plt.subplot(2,4,3)
+        plt.imshow(adc_img[i], cmap="gray")
+        plt.subplot(2,4,4)
+        plt.imshow(cbv_img[i], cmap="gray")
+        plt.subplot(2,4,5)
         plt.imshow(res[i], cmap=cmap)
-        plt.subplot(1,3,2)
+        plt.subplot(2,4,6)
         plt.imshow(seg_combined[i], cmap=cmap)
-        plt.subplot(1,3,3)
+        plt.subplot(2,4,7)
         plt.imshow(seg_combined[i] == res[i], cmap="gray")
-        plt.savefig("../../../some_images/segWholeDataset_z%03.0f"%i)
+        plt.savefig("/home/fabian/datasets/Hirntumor_von_David/experiments/some_images/patient%d_segWholeDataset_z%03.0f"%(patient_id, i))
         plt.close()
-    return res
 
 def predict_whole_dataset_patchwise(t1km_img, flair_img, adc_img, cbv_img, seg_combined):
     import matplotlib.pyplot as plt

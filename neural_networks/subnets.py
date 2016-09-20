@@ -72,13 +72,16 @@ def residual_block_noBN(l, increase_dim=False, projection=False):
 
 
 # create a residual learning building block with two stacked 3x3 convlayers as in paper
-def residual_block_noPool(l, increase_dim=False, projection=True):
+def residual_block_noPool(l, increase_dim=False, projection=True, out_num_filters=None):
     input_num_filters = l.output_shape[1]
     first_stride = (1,1)
-    if increase_dim:
-        out_num_filters = input_num_filters*2
+    if out_num_filters is None:
+        if increase_dim:
+            out_num_filters = input_num_filters*2
+        else:
+            out_num_filters = input_num_filters
     else:
-        out_num_filters = input_num_filters
+        increase_dim = True
 
     stack_1 = batch_norm(ConvLayer(l, num_filters=out_num_filters, filter_size=(3,3), stride=first_stride, nonlinearity=rectify, pad='same', W=lasagne.init.HeNormal(gain='relu'), flip_filters=False))
     stack_2 = batch_norm(ConvLayer(stack_1, num_filters=out_num_filters, filter_size=(3,3), stride=(1,1), nonlinearity=None, pad='same', W=lasagne.init.HeNormal(gain='relu'), flip_filters=False))
@@ -99,22 +102,25 @@ def residual_block_noPool(l, increase_dim=False, projection=True):
 
     return block
 
-def residual_block_noPool_noBN(l, increase_dim=False, projection=True):
+def residual_block_noPool_noBN(l, increase_dim=False, projection=True, out_num_filters=None):
     input_num_filters = l.output_shape[1]
     first_stride = (1,1)
-    if increase_dim:
-        out_num_filters = input_num_filters*2
+    if out_num_filters is None:
+        if increase_dim:
+            out_num_filters = input_num_filters*2
+        else:
+            out_num_filters = input_num_filters
     else:
-        out_num_filters = input_num_filters
+        increase_dim = True
 
     stack_1 = ConvLayer(l, num_filters=out_num_filters, filter_size=(3,3), stride=first_stride, nonlinearity=rectify, pad='same', W=lasagne.init.HeNormal(gain='relu'), flip_filters=False)
     stack_2 = ConvLayer(stack_1, num_filters=out_num_filters, filter_size=(3,3), stride=(1,1), nonlinearity=None, pad='same', W=lasagne.init.HeNormal(gain='relu'), flip_filters=False)
-
     # add shortcut connections
     if increase_dim:
         if projection:
             # projection shortcut, as option B in paper
             projection = ConvLayer(l, num_filters=out_num_filters, filter_size=(1,1), stride=(1,1), nonlinearity=None, pad='same', b=None, flip_filters=False)
+
             block = NonlinearityLayer(ElemwiseSumLayer([stack_2, projection]),nonlinearity=rectify)
         else:
             # identity shortcut, as option A in paper

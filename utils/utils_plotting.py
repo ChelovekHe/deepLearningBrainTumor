@@ -33,25 +33,39 @@ def plot_all_layer_activations(net, data):
             plot_layer_activations(net[layer], data, "%03.0d-%s.png" % (id, layer))
 
 
-def printLosses(all_training_losses, all_training_accs, all_validation_losses, all_valid_accur, fname, samplesPerEpoch=10):
-    fig, ax1 = plt.subplots()
+def printLosses(all_training_losses, all_training_accs, all_validation_losses, all_valid_accur, fname, samplesPerEpoch=10, auc_scores=None, auc_labels=None, ylim_score=None):
+    fig, ax1 = plt.subplots(figsize=(16, 12))
     trainLoss_x_values = np.arange(1/float(samplesPerEpoch), len(all_training_losses)/float(samplesPerEpoch)+0.000001, 1/float(samplesPerEpoch))
     val_x_values = np.arange(1, len(all_validation_losses)+0.001, 1)
-    ax1.plot(trainLoss_x_values, all_training_losses, 'b--')
-    ax1.plot(val_x_values, all_validation_losses, color='b')
+    ax1.plot(trainLoss_x_values, all_training_losses, 'b--', linewidth=2)
+    ax1.plot(val_x_values, all_validation_losses, color='b', linewidth=2)
     ax1.set_ylabel('loss')
     ax1.set_xlabel('epoch')
+    if ylim_score is not None:
+        ax1.set_ylim(ylim_score)
+
+    box = ax1.get_position()
+    ax1.set_position([box.x0, box.y0, box.width * 0.8, box.height])
 
     ax2 = ax1.twinx()
-    ax2.plot(trainLoss_x_values, all_training_accs, 'r--')
-    ax2.plot(val_x_values, all_valid_accur, color='r')
+    ax2.plot(trainLoss_x_values, all_training_accs, 'r--', linewidth=2)
+    ax2.plot(val_x_values, all_valid_accur, color='r', linewidth=2)
     ax2.set_ylabel('accuracy')
     for t2 in ax2.get_yticklabels():
         t2.set_color('r')
+    ax2_legend_text = ['trainAcc', 'validAcc']
 
-    ax1.legend(['trainLoss', 'validLoss'], loc=0)
-    ax2.legend(['trainAcc', 'validAcc'], loc=2)
-    # ax2.legend(['valAccuracy'])
+    if auc_scores is not None:
+        assert len(auc_scores) == len(all_validation_losses)
+        num_auc_scores_per_timestep = auc_scores.shape[1]
+        for auc_id in xrange(num_auc_scores_per_timestep):
+            ax2.plot(val_x_values, auc_scores[:, auc_id], linestyle=":", linewidth=4, markersize=10)
+            ax2_legend_text.append(auc_labels[auc_id])
+
+    ax2.set_position([box.x0, box.y0, box.width * 0.8, box.height])
+
+    ax1.legend(['trainLoss', 'validLoss'], loc="center right", bbox_to_anchor=(1.3, 0.4))
+    ax2.legend(ax2_legend_text, loc="center right", bbox_to_anchor=(1.3, 0.6))
     plt.savefig(fname)
     plt.close()
 

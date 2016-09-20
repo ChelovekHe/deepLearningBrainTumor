@@ -459,9 +459,3 @@ def memmapGenerator_allInOne_segmentation_lossSampling(array_data, array_gt, BAT
         seg = np.array(array_data[idx, -5:]).astype(np.float32)
         batches_generated += 1
         yield data, seg, idx
-
-def update_loss_per_sample(loss_old, losses):
-    # computes a moving average on the losses
-    avg_loss = np.mean(losses[:, 1])
-    loss_new = (loss_old + losses/avg_loss) / 2.
-    return loss_new

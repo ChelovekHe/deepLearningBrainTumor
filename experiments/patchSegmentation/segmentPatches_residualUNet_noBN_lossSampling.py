@@ -15,7 +15,7 @@ import cPickle
 from copy import deepcopy
 from numpy import memmap
 
-from UNet import build_UNet
+from UNet import build_deep_residual_UNet
 from data_generators import memmapGenerator_allInOne_segmentation_lossSampling
 from data_augmentation_generators import seg_channel_selection_generator, center_crop_generator, rotation_generator, elastric_transform_generator
 from multithreaded_generators import multi_threaded_generator
@@ -23,15 +23,14 @@ from utils_plotting import show_segmentation_results, printLosses, plot_all_laye
 from generator_utils import elastic_transform_2d
 from multithreaded_generators import Multithreaded_Generator
 from sklearn.metrics import roc_auc_score
-from general_utils import convert_seg_flat_to_binary_label_indicator_array
 
 sys.setrecursionlimit(2000)
 
 dataset_folder = "/media/fabian/DeepLearningData/datasets/"
-EXPERIMENT_NAME = "segment_tumor_v0.2_Unet_lossSampling"
+EXPERIMENT_NAME = "segment_tumor_resudialUnet_noBN_lossSampling"
 memmap_name = "patchSegmentation_allInOne_ws_t1km_flair_adc_cbv_resized"
 
-BATCH_SIZE = 10
+BATCH_SIZE = 1
 PATCH_SIZE = 256
 
 with open(dataset_folder + "%s_properties.pkl" % (memmap_name), 'r') as f:
@@ -79,8 +78,7 @@ data_gen_validation = memmapGenerator_allInOne_segmentation_lossSampling(memmap_
 data_gen_validation = center_crop_generator(data_gen_validation, (PATCH_SIZE, PATCH_SIZE))
 data_gen_validation = seg_channel_selection_generator(data_gen_validation, [2])
 data_gen_validation = multi_threaded_generator(data_gen_validation, num_threads=4, num_cached=10)
-
-net = build_UNet(20, BATCH_SIZE, num_output_classes=5, base_n_filters=16, input_dim=(PATCH_SIZE, PATCH_SIZE))
+net = build_deep_residual_UNet(20, BATCH_SIZE, num_output_classes=5, base_n_filters=16, input_dim=(PATCH_SIZE, PATCH_SIZE), n_res_blocks=1, doBN=False)
 output_layer_for_loss = net["output_flattened"]
 '''with open("../../../results/segment_tumor_v0.2_UNet_lossSampling/segment_tumor_v0.2_Unet_lossSampling_Params_ep30.pkl", 'r') as f:
     params = cPickle.load(f)
@@ -89,9 +87,9 @@ with open("../../../results/segment_tumor_v0.2_UNet_lossSampling/segment_tumor_v
     # [all_training_losses, all_training_accuracies, all_validation_losses, all_validation_accuracies, auc_all] = cPickle.load(f)
     [all_training_losses, all_training_accuracies, all_validation_losses, all_validation_accuracies] = cPickle.load(f)'''
 
-n_batches_per_epoch = 500
+n_batches_per_epoch = 5000
 # n_batches_per_epoch = np.floor(n_training_samples/float(BATCH_SIZE))
-n_test_batches = 50
+n_test_batches = 500
 # n_test_batches = np.floor(n_val_samples/float(BATCH_SIZE))
 
 x_sym = T.tensor4()
@@ -99,7 +97,7 @@ seg_sym = T.ivector()
 w_sym = T.vector()
 
 # add some weight decay
-l2_loss = lasagne.regularization.regularize_network_params(output_layer_for_loss, lasagne.regularization.l2) * 1e-4
+l2_loss = lasagne.regularization.regularize_network_params(output_layer_for_loss, lasagne.regularization.l2) * 5e-5
 
 # the distinction between prediction_train and test is important only if we enable dropout
 prediction_train = lasagne.layers.get_output(output_layer_for_loss, x_sym, deterministic=False)
@@ -126,6 +124,7 @@ acc = T.mean(T.eq(T.argmax(prediction_test, axis=1), seg_sym), dtype=theano.conf
 params = lasagne.layers.get_all_params(output_layer_for_loss, trainable=True)
 learning_rate = theano.shared(np.float32(0.001))
 updates = lasagne.updates.adam(loss, params, learning_rate=learning_rate)
+# updates = lasagne.updates.nesterov_momentum(loss, params, 0.005, 0.99)
 
 # create a convenience function to get the segmentation
 seg_output = lasagne.layers.get_output(net["output_segmentation"], x_sym, deterministic=True)
@@ -137,7 +136,7 @@ get_segmentation = theano.function([x_sym], seg_output)
 # we need this for calculating the AUC score
 get_class_probas = theano.function([x_sym], prediction_test)
 
-n_feedbacks_per_epoch = 10.
+n_feedbacks_per_epoch = 100.
 
 all_training_losses = []
 all_validation_losses = []
@@ -156,7 +155,13 @@ def update_losses(losses, idx, loss):
     losses[idx] = (losses[idx] + loss*2.) / 3.
     return losses
 
-n_epochs = 40
+def convert_seg_flat_to_binary_label_indicator_array(seg_flat, num_classes=5):
+    seg2 = np.zeros((len(seg_flat), num_classes))
+    for i in xrange(seg2.shape[0]):
+        seg2[i, int(seg_flat[i])] = 1
+    return seg2
+
+n_epochs = 80
 auc_scores=None
 for epoch in range(0,n_epochs):
     data_gen_train = memmapGenerator_allInOne_segmentation_lossSampling(memmap_data, memmap_gt, BATCH_SIZE, validation_patients, mode="train", ignore=[40], losses=losses)
@@ -164,7 +169,7 @@ for epoch in range(0,n_epochs):
     data_gen_train = rotation_generator(data_gen_train)
     data_gen_train = center_crop_generator(data_gen_train, (PATCH_SIZE, PATCH_SIZE))
     data_gen_train = elastric_transform_generator(data_gen_train, 550., 20.)
-    data_gen_train = Multithreaded_Generator(data_gen_train, 12, 100)
+    data_gen_train = Multithreaded_Generator(data_gen_train, 4, 20)
     data_gen_train._start()
     print "epoch: ", epoch
     train_loss = 0
@@ -198,8 +203,10 @@ for epoch in range(0,n_epochs):
 
     train_loss /= n_batches_per_epoch
     print "training loss average on epoch: ", train_loss
-    if epoch == 0:
+    if epoch > 2:
         losses[:] = train_loss
+    elif epoch <= 2:
+        losses = np.ones(len(memmap_gt))
 
     y_true = []
     y_pred = []
