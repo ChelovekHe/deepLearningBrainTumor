@@ -197,3 +197,5 @@ def pad_3d_image(image, pad_size, pad_value=None):
     new_image = np.ones(new_shape) * pad_value
     new_image[pad_size[0]/2.:pad_size[0]/2.+image_shape[0], pad_size[1]/2.:pad_size[1]/2.+image_shape[1], pad_size[2]/2.:pad_size[2]/2.+image_shape[2]] = image
     return new_image
+
+

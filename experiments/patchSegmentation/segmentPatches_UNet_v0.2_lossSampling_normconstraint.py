@@ -28,7 +28,7 @@ from general_utils import convert_seg_flat_to_binary_label_indicator_array
 sys.setrecursionlimit(2000)
 
 dataset_folder = "/media/fabian/DeepLearningData/datasets/"
-EXPERIMENT_NAME = "segment_tumor_v0.2_Unet_lossSampling"
+EXPERIMENT_NAME = "segment_tumor_v0.2_Unet_lossSampling_normconstraint"
 memmap_name = "patchSegmentation_allInOne_ws_t1km_flair_adc_cbv_resized"
 results_dir = os.path.join("/home/fabian/datasets/Hirntumor_von_David/experiments/results/", EXPERIMENT_NAME)
 if not os.path.isdir(results_dir):
@@ -127,8 +127,12 @@ acc = T.mean(T.eq(T.argmax(prediction_test, axis=1), seg_sym), dtype=theano.conf
 
 # learning rate has to be a shared variablebecause we decrease it with every epoch
 params = lasagne.layers.get_all_params(output_layer_for_loss, trainable=True)
+grad = [theano.gradient.grad_clip(i, -100., 100.) for i in T.grad(loss, params)]
 learning_rate = theano.shared(np.float32(0.001))
-updates = lasagne.updates.adam(loss, params, learning_rate=learning_rate)
+updates = lasagne.updates.adam(grad, params, learning_rate=learning_rate)
+'''for k in updates.keys():
+    if updates[k].ndim > 1:
+        updates[k] = lasagne.updates.norm_constraint(updates[k], 100)'''
 
 # create a convenience function to get the segmentation
 seg_output = lasagne.layers.get_output(net["output_segmentation"], x_sym, deterministic=True)
@@ -167,7 +171,7 @@ for epoch in range(0,n_epochs):
     data_gen_train = rotation_generator(data_gen_train)
     data_gen_train = center_crop_generator(data_gen_train, (PATCH_SIZE, PATCH_SIZE))
     data_gen_train = elastric_transform_generator(data_gen_train, 550., 20.)
-    data_gen_train = Multithreaded_Generator(data_gen_train, 12, 100)
+    data_gen_train = Multithreaded_Generator(data_gen_train, 12, 24)
     data_gen_train._start()
     print "epoch: ", epoch
     train_loss = 0

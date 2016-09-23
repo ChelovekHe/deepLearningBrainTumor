@@ -459,3 +459,143 @@ def memmapGenerator_allInOne_segmentation_lossSampling(array_data, array_gt, BAT
         seg = np.array(array_data[idx, -5:]).astype(np.float32)
         batches_generated += 1
         yield data, seg, idx
+
+
+def load_all_patients():
+    folder = "/media/fabian/DeepLearningData/datasets/Hirntumor_raw_data/"
+    all_patient_data = {}
+    for i in range(150):
+        if not path.isfile(folder + "patient_%03.0d_adc_data.npy" % i):
+            continue
+        if not path.isfile(folder + "patient_%03.0d_cbv_data.npy" % i):
+            continue
+        if not path.isfile(folder + "patient_%03.0d_flair_data.npy" % i):
+            continue
+        if not path.isfile(folder + "patient_%03.0d_segmentation.npy" % i):
+            continue
+        if not path.isfile(folder + "patient_%03.0d_t1_data.npy" % i):
+            continue
+        if not path.isfile(folder + "patient_%03.0d_t1km_data.npy" % i):
+            continue
+        if not path.isfile(folder + "patient_%03.0d_t1km_downsampled_128_data.npy" % i):
+            continue
+        all_patient_data[i] = {}
+
+        all_patient_data[i]["t1"] = np.load(folder + "patient_%03.0d_t1_data.npy" % i, mmap_mode="r")
+        all_patient_data[i]["t1km"] = np.load(folder + "patient_%03.0d_t1km_data.npy" % i, mmap_mode="r")
+        all_patient_data[i]["adc"] = np.load(folder + "patient_%03.0d_adc_data.npy" % i, mmap_mode="r")
+        all_patient_data[i]["cbv"] = np.load(folder + "patient_%03.0d_cbv_data.npy" % i, mmap_mode="r")
+        all_patient_data[i]["flair"] = np.load(folder + "patient_%03.0d_flair_data.npy" % i, mmap_mode="r")
+        all_patient_data[i]["seg"] = np.load(folder + "patient_%03.0d_segmentation.npy" % i, mmap_mode="r")
+        all_patient_data[i]["t1km_ds"] = np.load(folder + "patient_%03.0d_t1km_downsampled_128_data.npy" % i, mmap_mode="r")
+    return all_patient_data
+
+
+class SegmentationBatchGeneratorFromRawData():
+    def __init__(self, all_patient_data, BATCH_SIZE, validation_patients, PATCH_SIZE=(736, 736), mode="train", ignore=[], losses=None, num_batches=None, seed=None):
+        assert mode in ["train", "test"]
+        self._all_patient_data = all_patient_data
+        self.BATCH_SIZE = BATCH_SIZE
+        self._validation_patients = validation_patients
+        self._mode = mode
+        self._ignore = ignore
+        self._losses = losses
+        self._num_batches = num_batches
+        self._seed = None
+        self._resetted_rng = False
+        self._iter_initialized = False
+        self._p = None
+        self._PATCH_SIZE = PATCH_SIZE
+
+        # patches with higher loss are sampled more frequently
+        if self._num_batches is None:
+            self._num_batches = 1e100
+        self._batches_generated = 0
+
+        num_slices = 0
+        for patient in self._all_patient_data.keys():
+            shape = self._all_patient_data[patient]["t1km"].shape
+            num_slices += (shape[0] - 4)
+        self._loss_sampling_data = np.zeros((num_slices, 3)) # [identifier, patient id, slice id, loss of that slice]
+        pos = 0
+        for patient in self._all_patient_data.keys():
+            num_slices_this_patient = self._all_patient_data[patient]["t1km"].shape[0] - 4
+            self._loss_sampling_data[pos:pos+num_slices_this_patient, 0] = patient
+            self._loss_sampling_data[pos:pos+num_slices_this_patient, 1] = np.arange(2, num_slices_this_patient+2)
+            self._loss_sampling_data[pos:pos+num_slices_this_patient, 2] = 100
+            pos += num_slices_this_patient
+
+    def get_losses(self):
+        return self._loss_sampling_data[:, -1]
+
+    def set_losses(self, new_losses):
+        assert len(new_losses) == self._loss_sampling_data.shape[0]
+        self._loss_sampling_data.shape[:, -1] = new_losses
+
+    def _initialize_iter(self):
+        self._data_idx = find_entries_in_array(self._validation_patients, np.unique(self._loss_sampling_data[:, 0]))
+        if self._mode == "train":
+            self._data_idx = ~self._data_idx
+        self._data_idx = np.where(self._data_idx)[0]
+        if len(self._ignore) > 0:
+            self._data_idx = self._data_idx[~find_entries_in_array(self._ignore, self._loss_sampling_data[self._data_idx, 0])]
+        self._p = self._loss_sampling_data[self._data_idx, 2] / np.sum(self._loss_sampling_data[self._data_idx, 2])
+        self._iter_initialized = True
+
+    def __iter__(self):
+        return self
+
+    def next(self):
+        if not self._iter_initialized:
+            self._initialize_iter()
+        if self._batches_generated >= self._num_batches:
+            raise StopIteration
+        idx = np.random.choice(self._data_idx, self.BATCH_SIZE, p=self._p)
+        data = np.zeros((self.BATCH_SIZE, 25, self._PATCH_SIZE[0], self._PATCH_SIZE[1]), dtype=np.float32)
+        seg = np.zeros((self.BATCH_SIZE, 5, self._PATCH_SIZE[0], self._PATCH_SIZE[1]), dtype=np.float32)
+        for j, i in enumerate(idx):
+            patient = self._loss_sampling_data[i, 0]
+            slice = self._loss_sampling_data[i, 1]
+            data_t1km = self._all_patient_data[patient]["t1km"][slice-2:slice+3]
+            data_adc = self._all_patient_data[patient]["adc"][slice-2:slice+3]
+            data_flair = self._all_patient_data[patient]["flair"][slice-2:slice+3]
+            data_cbv = self._all_patient_data[patient]["cbv"][slice-2:slice+3]
+            data_t1 = self._all_patient_data[patient]["t1"][slice-2:slice+3]
+            data_seg = self._all_patient_data[patient]["seg"][slice-2:slice+3]
+
+            data_t1km = self.resize_image_by_padding(np.array(data_t1km), self._PATCH_SIZE)
+            data_adc = self.resize_image_by_padding(np.array(data_adc), self._PATCH_SIZE)
+            data_flair = self.resize_image_by_padding(np.array(data_flair), self._PATCH_SIZE)
+            data_cbv = self.resize_image_by_padding(np.array(data_cbv), self._PATCH_SIZE)
+            data_t1 = self.resize_image_by_padding(np.array(data_t1), self._PATCH_SIZE)
+            data_seg = self.resize_image_by_padding(np.array(data_seg), self._PATCH_SIZE)
+
+            data[j, :5] = data_t1km
+            data[j, 5:10] = data_adc
+            data[j, 10:15] = data_flair
+            data[j, 15:20] = data_cbv
+            data[j, 20:25] = data_t1
+            seg[j] = data_seg
+        return data, seg, idx
+
+    @staticmethod
+    def resize_image_by_padding(image, new_shape, pad_value=None):
+        shape = tuple(list(image.shape)[1:])
+        new_shape = tuple(np.max(np.concatenate((shape, new_shape)).reshape(2,2), axis=0))
+        if pad_value is None:
+            pad_value = image[0, 0, 0]
+        pad_x = [(new_shape[0]-shape[0])/2, (new_shape[0]-shape[0])/2]
+        pad_y = [(new_shape[1]-shape[1])/2, (new_shape[1]-shape[1])/2]
+        if (new_shape[0]-shape[0])%2 == 1:
+            pad_x[1] += 1
+        if (new_shape[1]-shape[1])%2 == 1:
+            pad_y[1] += 1
+        res = np.ones([image.shape[0]]+list(new_shape), dtype=image.dtype) * pad_value
+        start = np.array(new_shape)/2. - np.array(shape)/2.
+        res[:, start[0]:start[0]+shape[0], start[1]:start[1]+shape[1]] = image
+        return res
+
+#if __name__ == "__main__":
+#     a = load_all_patients()
+#     b = SegmentationBatchGeneratorFromRawData(a, 1, [1, 2, 3], (256, 256))
+#     _ = b.next()

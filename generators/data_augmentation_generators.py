@@ -14,7 +14,7 @@ def rotation_generator(generator, angle_range=(-180, 180)):
         seg_min = np.min(seg)
         seg_max = np.max(seg)
         angle = np.random.uniform(angle_range[0], angle_range[1])
-        data = interpolation.rotate(data, angle, (2, 3), reshape=False)
+        data = interpolation.rotate(data, angle, (2, 3), reshape=False, mode='nearest')
         seg = np.round(interpolation.rotate(seg, angle, (2, 3), reshape=False)).astype(np.int32)
         seg[seg > seg_max] = seg_max
         seg[seg < seg_min] = seg_min

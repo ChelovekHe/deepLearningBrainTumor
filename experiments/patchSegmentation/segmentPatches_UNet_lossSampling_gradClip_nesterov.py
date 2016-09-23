@@ -28,7 +28,7 @@ from general_utils import convert_seg_flat_to_binary_label_indicator_array
 sys.setrecursionlimit(2000)
 
 dataset_folder = "/media/fabian/DeepLearningData/datasets/"
-EXPERIMENT_NAME = "segment_tumor_v0.2_Unet_lossSampling"
+EXPERIMENT_NAME = "segment_tumor_Unet_lossSampling_gradClip_nesterov"
 memmap_name = "patchSegmentation_allInOne_ws_t1km_flair_adc_cbv_resized"
 results_dir = os.path.join("/home/fabian/datasets/Hirntumor_von_David/experiments/results/", EXPERIMENT_NAME)
 if not os.path.isdir(results_dir):
@@ -47,7 +47,7 @@ info_memmap_shape = my_dict['info_shape']
 class_frequencies = np.zeros(5, dtype=np.float32)
 for i in range(5):
     class_frequencies[i] = my_dict['class_frequencies'][i]
-class_frequencies = np.sqrt(class_frequencies)**0.5
+class_frequencies = np.sqrt(class_frequencies)
 class_frequencies2 = deepcopy(class_frequencies)
 for i in range(5):
     class_frequencies2[i] = class_frequencies[range(5) != i] / class_frequencies[i]
@@ -92,9 +92,9 @@ with open(os.path.join(results_dir, "%s_allLossesNAccur_ep30.pkl"%EXPERIMENT_NAM
     # [all_training_losses, all_training_accuracies, all_validation_losses, all_validation_accuracies, auc_all] = cPickle.load(f)
     [all_training_losses, all_training_accuracies, all_validation_losses, all_validation_accuracies] = cPickle.load(f)'''
 
-n_batches_per_epoch = 500
+n_batches_per_epoch = 1000
 # n_batches_per_epoch = np.floor(n_training_samples/float(BATCH_SIZE))
-n_test_batches = 50
+n_test_batches = 100
 # n_test_batches = np.floor(n_val_samples/float(BATCH_SIZE))
 
 x_sym = T.tensor4()
@@ -127,8 +127,10 @@ acc = T.mean(T.eq(T.argmax(prediction_test, axis=1), seg_sym), dtype=theano.conf
 
 # learning rate has to be a shared variablebecause we decrease it with every epoch
 params = lasagne.layers.get_all_params(output_layer_for_loss, trainable=True)
+grad = [theano.gradient.grad_clip(i, -100., 100.) for i in T.grad(loss, params)]
 learning_rate = theano.shared(np.float32(0.001))
-updates = lasagne.updates.adam(loss, params, learning_rate=learning_rate)
+# updates = lasagne.updates.adam(grad, params, learning_rate=learning_rate)
+updates = lasagne.updates.nesterov_momentum(grad, params, learning_rate, 0.9)
 
 # create a convenience function to get the segmentation
 seg_output = lasagne.layers.get_output(net["output_segmentation"], x_sym, deterministic=True)
@@ -159,15 +161,15 @@ def update_losses(losses, idx, loss):
     losses[idx] = (losses[idx] + loss*2.) / 3.
     return losses
 
-n_epochs = 40
+n_epochs = 20
 auc_scores=None
 for epoch in range(0,n_epochs):
     data_gen_train = memmapGenerator_allInOne_segmentation_lossSampling(memmap_data, memmap_gt, BATCH_SIZE, validation_patients, mode="train", ignore=[40], losses=losses)
     data_gen_train = seg_channel_selection_generator(data_gen_train, [2])
     data_gen_train = rotation_generator(data_gen_train)
     data_gen_train = center_crop_generator(data_gen_train, (PATCH_SIZE, PATCH_SIZE))
-    data_gen_train = elastric_transform_generator(data_gen_train, 550., 20.)
-    data_gen_train = Multithreaded_Generator(data_gen_train, 12, 100)
+    # data_gen_train = elastric_transform_generator(data_gen_train, 550., 20.)
+    data_gen_train = Multithreaded_Generator(data_gen_train, 8, 100)
     data_gen_train._start()
     print "epoch: ", epoch
     train_loss = 0

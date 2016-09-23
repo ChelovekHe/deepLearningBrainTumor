@@ -203,10 +203,8 @@ for epoch in range(0,n_epochs):
 
     train_loss /= n_batches_per_epoch
     print "training loss average on epoch: ", train_loss
-    if epoch > 2:
+    if epoch <= 2:
         losses[:] = train_loss
-    elif epoch <= 2:
-        losses = np.ones(len(memmap_gt))
 
     y_true = []
     y_pred = []
