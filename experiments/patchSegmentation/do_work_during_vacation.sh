@@ -1,3 +1,3 @@
 #!/bin/bash
-python segmentPatches_UNet_lossSampling_gradClip_nesterov.py
-python segmentPatches_UNet_lossSampling_gradClip_adam.py
+python segmentPatches_David_UNet_lossSampling_gradClip_adam_TitanX.py
+python segmentPatches_David_UNet_lossSampling_gradClip_adam_TitanX_moar_sensitivity.py

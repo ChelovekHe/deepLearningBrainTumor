@@ -4,7 +4,7 @@ import IPython
 import os.path as path
 from numpy import memmap
 import sys
-sys.path.append("../utils")
+sys.path.append("/home/fabian/datasets/Hirntumor_von_David/experiments/code/utils")
 from general_utils import find_entries_in_array
 from copy import deepcopy
 from scipy.ndimage import interpolation
@@ -490,6 +490,79 @@ def load_all_patients():
         all_patient_data[i]["t1km_ds"] = np.load(folder + "patient_%03.0d_t1km_downsampled_128_data.npy" % i, mmap_mode="r")
     return all_patient_data
 
+def load_all_patients_BraTS_2014_HGG():
+    folder = "/media/fabian/My Book/datasets/BraTS/2014/train/HGG_npy/brain_only/adapted_value_range/"
+    all_patient_data = {}
+    for i in range(999):
+        if not path.isfile(folder + "%03.0d.npy" % i):
+            continue
+
+        all_data = np.load(folder + "%03.0d.npy" % i, mmap_mode="r")
+        all_patient_data[i] = {}
+
+        all_patient_data[i]["t1"] = all_data[0]
+        all_patient_data[i]["t1km"] = all_data[1]
+        all_patient_data[i]["t2"] = all_data[2]
+        all_patient_data[i]["flair"] = all_data[3]
+        all_patient_data[i]["seg"] = all_data[4]
+        all_patient_data[i]["t2_no_bc"] = all_data[5]
+    return all_patient_data
+
+def load_all_patients_BraTS_2014_HGG_non_adapted_values():
+    folder = "/media/fabian/My Book/datasets/BraTS/2014/train/HGG_npy/brain_only/original_value_range/"
+    all_patient_data = {}
+    for i in range(999):
+        if not path.isfile(folder + "%03.0d.npy" % i):
+            continue
+
+        all_data = np.load(folder + "%03.0d.npy" % i, mmap_mode="r")
+        all_patient_data[i] = {}
+
+        all_patient_data[i]["t1"] = all_data[0]
+        all_patient_data[i]["t1km"] = all_data[1]
+        all_patient_data[i]["t2"] = all_data[2]
+        all_patient_data[i]["flair"] = all_data[3]
+        all_patient_data[i]["seg"] = all_data[4]
+        all_patient_data[i]["t2_no_bc"] = all_data[5]
+    return all_patient_data
+
+
+def load_all_patients_David():
+    folder = "/media/fabian/DeepLearningData/datasets/Hirntumor_David_raw_highRes/"
+    all_patient_data = {}
+    for i in range(999):
+        if not path.isfile(folder + "%03.0d.npy" % i):
+            continue
+
+        all_data = np.load(folder + "%03.0d.npy" % i, mmap_mode="r")
+        all_patient_data[i] = {}
+
+        all_patient_data[i]["t1"] = all_data[0]
+        all_patient_data[i]["t1km"] = all_data[1]
+        all_patient_data[i]["flair"] = all_data[2]
+        all_patient_data[i]["adc"] = all_data[3]
+        all_patient_data[i]["cbv"] = all_data[4]
+        all_patient_data[i]["seg"] = all_data[5]
+    return all_patient_data
+
+def load_all_patients_David_not_adapted():
+    folder = "/media/fabian/My Book/datasets/Hirntumor_resampled_Highres"
+    all_patient_data = {}
+    for i in range(999):
+        if not path.isfile(folder + "%03.0d.npy" % i):
+            continue
+
+        all_data = np.load(folder + "%03.0d.npy" % i, mmap_mode="r")
+        all_patient_data[i] = {}
+
+        all_patient_data[i]["t1"] = all_data[0]
+        all_patient_data[i]["t1km"] = all_data[1]
+        all_patient_data[i]["flair"] = all_data[2]
+        all_patient_data[i]["adc"] = all_data[3]
+        all_patient_data[i]["cbv"] = all_data[4]
+        all_patient_data[i]["seg"] = all_data[5]
+    return all_patient_data
+
 
 class SegmentationBatchGeneratorFromRawData():
     def __init__(self, all_patient_data, BATCH_SIZE, validation_patients, PATCH_SIZE=(736, 736), mode="train", ignore=[], losses=None, num_batches=None, seed=None):
@@ -499,7 +572,6 @@ class SegmentationBatchGeneratorFromRawData():
         self._validation_patients = validation_patients
         self._mode = mode
         self._ignore = ignore
-        self._losses = losses
         self._num_batches = num_batches
         self._seed = None
         self._resetted_rng = False
@@ -516,14 +588,17 @@ class SegmentationBatchGeneratorFromRawData():
         for patient in self._all_patient_data.keys():
             shape = self._all_patient_data[patient]["t1km"].shape
             num_slices += (shape[0] - 4)
-        self._loss_sampling_data = np.zeros((num_slices, 3)) # [identifier, patient id, slice id, loss of that slice]
+        self._loss_sampling_data = np.zeros((num_slices, 3)) # [patient id, slice id, loss of that slice]
         pos = 0
         for patient in self._all_patient_data.keys():
             num_slices_this_patient = self._all_patient_data[patient]["t1km"].shape[0] - 4
             self._loss_sampling_data[pos:pos+num_slices_this_patient, 0] = patient
             self._loss_sampling_data[pos:pos+num_slices_this_patient, 1] = np.arange(2, num_slices_this_patient+2)
-            self._loss_sampling_data[pos:pos+num_slices_this_patient, 2] = 100
             pos += num_slices_this_patient
+        if losses is not None:
+            self._loss_sampling_data[:, 2] = losses
+        else:
+            self._loss_sampling_data[:, 2] = 100
 
     def get_losses(self):
         return self._loss_sampling_data[:, -1]
@@ -533,7 +608,8 @@ class SegmentationBatchGeneratorFromRawData():
         self._loss_sampling_data.shape[:, -1] = new_losses
 
     def _initialize_iter(self):
-        self._data_idx = find_entries_in_array(self._validation_patients, np.unique(self._loss_sampling_data[:, 0]))
+        np.random.seed(self._seed)
+        self._data_idx = find_entries_in_array(self._validation_patients, self._loss_sampling_data[:, 0])
         if self._mode == "train":
             self._data_idx = ~self._data_idx
         self._data_idx = np.where(self._data_idx)[0]
@@ -551,11 +627,15 @@ class SegmentationBatchGeneratorFromRawData():
         if self._batches_generated >= self._num_batches:
             raise StopIteration
         idx = np.random.choice(self._data_idx, self.BATCH_SIZE, p=self._p)
-        data = np.zeros((self.BATCH_SIZE, 25, self._PATCH_SIZE[0], self._PATCH_SIZE[1]), dtype=np.float32)
-        seg = np.zeros((self.BATCH_SIZE, 5, self._PATCH_SIZE[0], self._PATCH_SIZE[1]), dtype=np.float32)
+        data, seg, idx = self.generate_train_batch(idx)
+        return data, seg, idx
+
+    def generate_train_batch(self, idx):
+        data = np.zeros((len(idx), 25, self._PATCH_SIZE[0], self._PATCH_SIZE[1]), dtype=np.float32)
+        seg = np.zeros((len(idx), 5, self._PATCH_SIZE[0], self._PATCH_SIZE[1]), dtype=np.float32)
         for j, i in enumerate(idx):
             patient = self._loss_sampling_data[i, 0]
-            slice = self._loss_sampling_data[i, 1]
+            slice = int(self._loss_sampling_data[i, 1])
             data_t1km = self._all_patient_data[patient]["t1km"][slice-2:slice+3]
             data_adc = self._all_patient_data[patient]["adc"][slice-2:slice+3]
             data_flair = self._all_patient_data[patient]["flair"][slice-2:slice+3]
@@ -592,10 +672,67 @@ class SegmentationBatchGeneratorFromRawData():
             pad_y[1] += 1
         res = np.ones([image.shape[0]]+list(new_shape), dtype=image.dtype) * pad_value
         start = np.array(new_shape)/2. - np.array(shape)/2.
-        res[:, start[0]:start[0]+shape[0], start[1]:start[1]+shape[1]] = image
+        res[:, int(start[0]):int(start[0])+int(shape[0]), int(start[1]):int(start[1])+int(shape[1])] = image
         return res
 
-#if __name__ == "__main__":
-#     a = load_all_patients()
-#     b = SegmentationBatchGeneratorFromRawData(a, 1, [1, 2, 3], (256, 256))
-#     _ = b.next()
+class SegmentationBatchGeneratorBraTS2014(SegmentationBatchGeneratorFromRawData):
+    def generate_train_batch(self, idx):
+        data = np.zeros((len(idx), 20, self._PATCH_SIZE[0], self._PATCH_SIZE[1]), dtype=np.float32)
+        seg = np.zeros((len(idx), 5, self._PATCH_SIZE[0], self._PATCH_SIZE[1]), dtype=np.float32)
+        for j, i in enumerate(idx):
+            patient = self._loss_sampling_data[i, 0]
+            slice = int(self._loss_sampling_data[i, 1])
+            data_t1km = self._all_patient_data[patient]["t1km"][slice-2:slice+3]
+            data_flair = self._all_patient_data[patient]["flair"][slice-2:slice+3]
+            data_t2 = self._all_patient_data[patient]["t2_no_bc"][slice-2:slice+3]
+            data_t1 = self._all_patient_data[patient]["t1"][slice-2:slice+3]
+            data_seg = self._all_patient_data[patient]["seg"][slice-2:slice+3]
+
+            data_t1km = self.resize_image_by_padding(np.array(data_t1km), self._PATCH_SIZE)
+            data_flair = self.resize_image_by_padding(np.array(data_flair), self._PATCH_SIZE)
+            data_t2 = self.resize_image_by_padding(np.array(data_t2), self._PATCH_SIZE)
+            data_t1 = self.resize_image_by_padding(np.array(data_t1), self._PATCH_SIZE)
+            data_seg = self.resize_image_by_padding(np.array(data_seg), self._PATCH_SIZE)
+
+            data[j, :5] = data_t1
+            data[j, 5:10] = data_t1km
+            data[j, 10:15] = data_t2
+            data[j, 15:20] = data_flair
+            seg[j] = data_seg
+        return data, seg, idx
+
+class SegmentationBatchGeneratorDavid(SegmentationBatchGeneratorFromRawData):
+    def generate_train_batch(self, idx):
+        data = np.zeros((len(idx), 25, self._PATCH_SIZE[0], self._PATCH_SIZE[1]), dtype=np.float32)
+        seg = np.zeros((len(idx), 5, self._PATCH_SIZE[0], self._PATCH_SIZE[1]), dtype=np.float32)
+        for j, i in enumerate(idx):
+            patient = self._loss_sampling_data[i, 0]
+            slice = int(self._loss_sampling_data[i, 1])
+            data_t1 = self._all_patient_data[patient]["t1"][slice-2:slice+3]
+            data_t1km = self._all_patient_data[patient]["t1km"][slice-2:slice+3]
+            data_flair = self._all_patient_data[patient]["flair"][slice-2:slice+3]
+            data_adc = self._all_patient_data[patient]["adc"][slice-2:slice+3]
+            data_cbv = self._all_patient_data[patient]["cbv"][slice-2:slice+3]
+            data_seg = self._all_patient_data[patient]["seg"][slice-2:slice+3]
+
+            data_t1 = self.resize_image_by_padding(np.array(data_t1), self._PATCH_SIZE)
+            data_t1km = self.resize_image_by_padding(np.array(data_t1km), self._PATCH_SIZE)
+            data_flair = self.resize_image_by_padding(np.array(data_flair), self._PATCH_SIZE)
+            data_adc = self.resize_image_by_padding(np.array(data_adc), self._PATCH_SIZE)
+            data_cbv = self.resize_image_by_padding(np.array(data_cbv), self._PATCH_SIZE)
+            data_seg = self.resize_image_by_padding(np.array(data_seg), self._PATCH_SIZE)
+
+            data[j, :5] = data_t1
+            data[j, 5:10] = data_t1km
+            data[j, 10:15] = data_flair
+            data[j, 15:20] = data_adc
+            data[j, 20:25] = data_cbv
+            seg[j] = data_seg
+        return data, seg, idx
+
+if __name__ == "__main__":
+     a = load_all_patients_David()
+     b = SegmentationBatchGeneratorDavid(a, 50, [1, 2, 3], (320, 384), ignore=[40])
+     _ = b.next()
+     import IPython
+     IPython.embed()

@@ -15,12 +15,13 @@ from multiprocessing import Pool as ThreadPool
 from skimage.transform import resize
 from matplotlib.colors import ListedColormap
 import sys
-sys.path.append("../experiments/patchSegmentation/")
-sys.path.append("../neural_networks/")
-sys.path.append("../dataset_utils/")
+sys.path.append("/home/fabian/datasets/Hirntumor_von_David/experiments/code/experiments/patchSegmentation")
+sys.path.append("/home/fabian/datasets/Hirntumor_von_David/experiments/code/neural_networks")
+sys.path.append("/home/fabian/datasets/Hirntumor_von_David/experiments/code/dataset_utils")
 import UNet
 from dataset_utility import load_patient_resampled
 from sklearn.metrics import roc_auc_score
+from medpy import metric
 
 def calculate_validation_metrics(probas_pred, image_gt, class_labels=None, num_classes=5):
     classes = np.arange(probas_pred.shape[-1])
@@ -34,24 +35,28 @@ def calculate_validation_metrics(probas_pred, image_gt, class_labels=None, num_c
     y_pred = probas_pred.transpose(3, 0, 1, 2).reshape(num_classes, -1).transpose(1, 0)[:, classes]
     scores = roc_auc_score(y_true, y_pred, None)
     for i, c in enumerate(classes):
-        true_positives = np.sum((image_gt == c) & (image_pred == c))
-        true_negatives = np.sum((image_gt != c) & (image_pred != c))
-        false_positives = np.sum((image_gt != c) & (image_pred == c))
-        false_negatives = np.sum((image_gt == c) & (image_pred != c))
-        specificity = true_negatives / float(true_negatives + false_positives)
-        sensitivity = true_positives / float(true_positives + false_negatives)
-        f1_score = 2. * true_positives / float(2 * true_positives + false_positives + false_negatives)
-        jaccard_index = np.sum((image_pred == c) & (image_gt == c)) / float(np.sum((image_gt == c) | (image_pred == c)))
-        dice_score = 2. * np.sum((image_pred == c) & (image_gt == c)) / float(np.sum(image_gt == c) + np.sum(image_pred == c))
+        true_positives = metric.obj_tpr(image_gt==c, image_pred==c)
+        false_positives = metric.obj_fpr(image_gt==c, image_pred==c)
+        dc = metric.dc(image_gt==c, image_pred==c)
+        hd = metric.hd(image_gt==c, image_pred==c)
+        precision = metric.precision(image_gt==c, image_pred==c)
+        recall = metric.recall(image_gt==c, image_pred==c)
+        ravd = metric.ravd(image_gt==c, image_pred==c)
+        assd = metric.assd(image_gt==c, image_pred==c)
+        asd = metric.asd(image_gt==c, image_pred==c)
         label = c
         if class_labels is not None and c in class_labels.keys():
             label = class_labels[c]
-        class_metrics[label] = {'specificity': specificity,
-                                'sensitivity': sensitivity,
-                                'f1_score': f1_score,
-                                'jaccard_index': jaccard_index,
-                                'dice_score': dice_score,
-                                'roc_auc': scores[i]}
+        class_metrics[label] = {'true_positives': true_positives,
+                                'false_positives': false_positives,
+                                'DICE\t\t': dc,
+                                'Hausdorff dist': hd,
+                                'precision\t': precision,
+                                'recall\t\t': recall,
+                                'rel abs vol diff': ravd,
+                                'avg surf dist symm': assd,
+                                'avg surf dist\t': asd,
+                                'roc_auc\t\t': scores[i]}
     return accuracy, class_metrics
 
 def convert_seg_flat_to_binary_label_indicator_array(seg_flat, num_classes=5):

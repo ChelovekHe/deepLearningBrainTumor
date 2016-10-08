@@ -29,9 +29,9 @@ def softmax_helper(x):
 
 
 validation_patients = np.unique([ 75,   1,  67,   1, 127, 120,  94, 131,  78,  74,  62,  10,  65, 47, 124])
-experiment_name = "segment_tumor_Unet_lossSampling_gradClip_adam"
+experiment_name = "segment_tumor_Unet_lossSampling_gradClip_adam_TitanX"
 results_folder = "/home/fabian/datasets/Hirntumor_von_David/experiments/results/%s/" % experiment_name
-epoch = 19
+epoch = 26
 
 for patient_id in validation_patients:
     print patient_id

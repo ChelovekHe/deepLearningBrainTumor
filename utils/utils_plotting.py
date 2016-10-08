@@ -265,6 +265,36 @@ def plot_some_data_varNumChannels(memmap_gen = memmapGenerator_tumorClassRot):
             ctr += 1
         i += 1
 
+def plot_some_data_varNumChannels_generator(generator, num_images=100):
+    ctr = 0
+    for data, seg, labels in generator:
+        data2 = np.array(data)
+        for img, segm, lab in zip(data2, seg, labels):
+            num_subplots = img.shape[0] + segm.shape[0]
+            subplot_ctr = 1
+            plt.figure(figsize=(12, 12))
+            for x in xrange(img.shape[0]):
+                plt.subplot(int(np.ceil(num_subplots**0.5)), int(np.ceil(num_subplots**0.5)), subplot_ctr)
+                plt.imshow(img[x], interpolation='nearest', cmap="gray")
+                if x == 0:
+                    if lab == 0:
+                        color = 'green'
+                    else:
+                        color = 'red'
+                    plt.text(0, 0, lab, color=color, bbox=dict(facecolor='white', alpha=1))
+                subplot_ctr += 1
+            for x in xrange(segm.shape[0]):
+                plt.subplot(int(np.ceil(num_subplots**0.5)), int(np.ceil(num_subplots**0.5)), subplot_ctr)
+                plt.imshow(segm[x], interpolation='nearest', cmap="gray")
+                subplot_ctr += 1
+            plt.savefig("/home/fabian/datasets/Hirntumor_von_David/experiments/some_images/img_%04.0f.png"%ctr)
+            plt.close()
+            ctr += 1
+            if ctr >= num_images:
+                break
+        if ctr >= num_images:
+            break
+
 
 def plot_layer_weights(layer):
     conv_1_1_weights = layer.get_params()[0].get_value()

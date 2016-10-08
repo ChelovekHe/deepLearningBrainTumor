@@ -16,7 +16,7 @@ from copy import deepcopy
 from numpy import memmap
 
 from UNet import build_UNet
-from data_generators import memmapGenerator_allInOne_segmentation_lossSampling
+from data_generators import load_all_patients, SegmentationBatchGeneratorFromRawData
 from data_augmentation_generators import seg_channel_selection_generator, center_crop_generator, rotation_generator, elastric_transform_generator
 from multithreaded_generators import multi_threaded_generator
 from utils_plotting import show_segmentation_results, printLosses, plot_all_layer_activations
@@ -27,15 +27,17 @@ from general_utils import convert_seg_flat_to_binary_label_indicator_array
 
 sys.setrecursionlimit(2000)
 
+all_patients = load_all_patients()
+
 dataset_folder = "/media/fabian/DeepLearningData/datasets/"
-EXPERIMENT_NAME = "segment_tumor_Unet_lossSampling_gradClip_nesterov_TitanX"
+EXPERIMENT_NAME = "segmentPatches_rawData_UNet_lossSampling_gradClip_adam_TitanX"
 memmap_name = "patchSegmentation_allInOne_ws_t1km_flair_adc_cbv_resized"
 results_dir = os.path.join("/home/fabian/datasets/Hirntumor_von_David/experiments/results/", EXPERIMENT_NAME)
 if not os.path.isdir(results_dir):
     os.mkdir(results_dir)
 
-BATCH_SIZE = 60
-PATCH_SIZE = 256
+BATCH_SIZE = 30
+PATCH_SIZE = (368, 336)
 
 with open(dataset_folder + "%s_properties.pkl" % (memmap_name), 'r') as f:
     my_dict = cPickle.load(f)
@@ -54,17 +56,11 @@ for i in range(5):
 class_frequencies2 /= np.sum(class_frequencies2)
 class_frequencies2 *= 5
 
-memmap_data = memmap(dataset_folder + "%s.memmap" % (memmap_name), dtype=np.float32, mode="r", shape=train_shape)
-memmap_gt = memmap(dataset_folder + "%s_info.memmap" % (memmap_name), dtype=np.float32, mode="r", shape=info_memmap_shape)
 
-patient_ids = np.unique(memmap_gt[:, 0]).astype(int)
 #validation_patients = np.random.choice(patient_ids, 15, False)
 
 # I should have used replace=False. Whatever...
 validation_patients = [ 75,   1,  67,   1, 127, 120,  94, 131,  78,  74,  62,  10,  65, 47, 124]
-
-n_training_samples = int(float(len(patient_ids) - len(validation_patients)) / float(len(patient_ids)) * memmap_data.shape[0])
-n_val_samples = int(float(len(validation_patients)) / float(len(patient_ids)) * memmap_data.shape[0])
 
 '''d, s, l = data_gen_train.next()
 plt.figure(figsize=(12, 5))
@@ -78,12 +74,11 @@ plt.imshow(d[0,0]-d1)
 plt.show()
 plt.close()'''
 
-data_gen_validation = memmapGenerator_allInOne_segmentation_lossSampling(memmap_data, memmap_gt, BATCH_SIZE, validation_patients, mode="test", ignore=[40])
-data_gen_validation = center_crop_generator(data_gen_validation, (PATCH_SIZE, PATCH_SIZE))
+data_gen_validation = SegmentationBatchGeneratorFromRawData(all_patients, BATCH_SIZE, validation_patients, PATCH_SIZE=PATCH_SIZE, mode="test", ignore=[40], losses=None, num_batches=None, seed=None)
 data_gen_validation = seg_channel_selection_generator(data_gen_validation, [2])
-data_gen_validation = multi_threaded_generator(data_gen_validation, num_threads=4, num_cached=10)
+data_gen_validation = multi_threaded_generator(data_gen_validation, num_threads=4, num_cached=30)
 
-net = build_UNet(20, BATCH_SIZE, num_output_classes=5, base_n_filters=16, input_dim=(PATCH_SIZE, PATCH_SIZE))
+net = build_UNet(25, BATCH_SIZE, num_output_classes=5, base_n_filters=16, input_dim=PATCH_SIZE)
 output_layer_for_loss = net["output_flattened"]
 '''with open(os.path.join(results_dir, "%s_Params_ep30.pkl"%EXPERIMENT_NAME, 'r') as f:
     params = cPickle.load(f)
@@ -92,9 +87,9 @@ with open(os.path.join(results_dir, "%s_allLossesNAccur_ep30.pkl"%EXPERIMENT_NAM
     # [all_training_losses, all_training_accuracies, all_validation_losses, all_validation_accuracies, auc_all] = cPickle.load(f)
     [all_training_losses, all_training_accuracies, all_validation_losses, all_validation_accuracies, auc_all, losses] = cPickle.load(f)'''
 
-n_batches_per_epoch = 250
+n_batches_per_epoch = 500
 # n_batches_per_epoch = np.floor(n_training_samples/float(BATCH_SIZE))
-n_test_batches = 50
+n_test_batches = 100
 # n_test_batches = np.floor(n_val_samples/float(BATCH_SIZE))
 
 x_sym = T.tensor4()
@@ -129,8 +124,8 @@ acc = T.mean(T.eq(T.argmax(prediction_test, axis=1), seg_sym), dtype=theano.conf
 params = lasagne.layers.get_all_params(output_layer_for_loss, trainable=True)
 grad = [theano.gradient.grad_clip(i, -10., 10.) for i in T.grad(loss, params)]
 learning_rate = theano.shared(np.float32(0.001))
-# updates = lasagne.updates.adam(grad, params, learning_rate=learning_rate)
-updates = lasagne.updates.nesterov_momentum(grad, params, learning_rate, 0.9)
+updates = lasagne.updates.adam(grad, params, learning_rate=learning_rate)
+# updates = lasagne.updates.nesterov_momentum(grad, params, learning_rate, 0.9)
 
 # create a convenience function to get the segmentation
 seg_output = lasagne.layers.get_output(net["output_segmentation"], x_sym, deterministic=True)
@@ -156,7 +151,9 @@ auc_all = []
     loss_new = (loss_old + losses/avg_loss) / 2.
     return loss_new'''
 
-losses = np.ones(len(memmap_gt))
+tmp = SegmentationBatchGeneratorFromRawData(all_patients, BATCH_SIZE, validation_patients, PATCH_SIZE=PATCH_SIZE, mode="train", ignore=[40], losses=None, num_batches=None, seed=None)
+
+losses = np.ones(tmp.get_losses().shape[0])
 def update_losses(losses, idx, loss):
     losses[idx] = (losses[idx] + loss*2.) / 3.
     return losses
@@ -164,11 +161,11 @@ def update_losses(losses, idx, loss):
 n_epochs = 30
 auc_scores=None
 for epoch in range(0,n_epochs):
-    data_gen_train = memmapGenerator_allInOne_segmentation_lossSampling(memmap_data, memmap_gt, BATCH_SIZE, validation_patients, mode="train", ignore=[40], losses=losses)
+    data_gen_train = SegmentationBatchGeneratorFromRawData(all_patients, BATCH_SIZE, validation_patients, PATCH_SIZE=PATCH_SIZE, mode="train", ignore=[40], losses=losses, num_batches=1500, seed=None)
     data_gen_train = seg_channel_selection_generator(data_gen_train, [2])
     data_gen_train = rotation_generator(data_gen_train)
-    data_gen_train = center_crop_generator(data_gen_train, (PATCH_SIZE, PATCH_SIZE))
-    data_gen_train = elastric_transform_generator(data_gen_train, 550., 20.)
+    # data_gen_train = center_crop_generator(data_gen_train, (PATCH_SIZE, PATCH_SIZE))
+    data_gen_train = elastric_transform_generator(data_gen_train, 450., 16.)
     data_gen_train = Multithreaded_Generator(data_gen_train, 12, 100)
     data_gen_train._start()
     print "epoch: ", epoch
@@ -243,11 +240,6 @@ for epoch in range(0,n_epochs):
         cPickle.dump(losses, f)
 
 '''
-import cPickle
-with open("../../../results/%s_Params.pkl"%EXPERIMENT_NAME, 'w') as f:
-    cPickle.dump(lasagne.layers.get_all_param_values(output_layer_for_loss), f)
-with open("../../../results/%s_allLossesNAccur.pkl"%EXPERIMENT_NAME, 'w') as f:
-    cPickle.dump([all_training_losses, all_training_accuracies, all_validation_losses, all_validation_accuracies], f)
 
 img_ctr = 0
 batch_ctr2 = 0

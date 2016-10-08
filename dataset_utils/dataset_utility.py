@@ -359,3 +359,8 @@ def extract_brain_region(image, segmentation, outside_value=0):
     # resize images
     resizer = (slice(minZidx, maxZidx), slice(minXidx, maxXidx), slice(minYidx, maxYidx))
     return image[resizer]
+
+
+def center_crop_image(image, output_size):
+    center = np.array(image.shape[1:])/2
+    return image[:, int(center[0]-output_size[0]/2.):int(center[0]+output_size[0]/2.), int(center[1]-output_size[1]/2.):int(center[1]+output_size[1]/2.)]

@@ -16,8 +16,8 @@ from copy import deepcopy
 from numpy import memmap
 
 from UNet import build_UNet
-from data_generators import memmapGenerator_allInOne_segmentation_lossSampling
-from data_augmentation_generators import seg_channel_selection_generator, center_crop_generator, rotation_generator, elastric_transform_generator
+from data_generators import load_all_patients_BraTS_2014_HGG, SegmentationBatchGeneratorBraTS2014
+from data_augmentation_generators import seg_channel_selection_generator, center_crop_generator, rotation_generator, elastric_transform_generator, center_crop_seg_generator, pad_generator, data_channel_selection_generator
 from multithreaded_generators import multi_threaded_generator
 from utils_plotting import show_segmentation_results, printLosses, plot_all_layer_activations
 from generator_utils import elastic_transform_2d
@@ -27,44 +27,47 @@ from general_utils import convert_seg_flat_to_binary_label_indicator_array
 
 sys.setrecursionlimit(2000)
 
+all_patients = load_all_patients_BraTS_2014_HGG()
+'''tmp = SegmentationBatchGeneratorBraTS2014(all_patients, 50, validation_patients, PATCH_SIZE=PATCH_SIZE, mode="train", ignore=[81], losses=None, num_batches=None, seed=None)
+tmp = center_crop_generator(tmp, (180, 160))
+ctr = 0
+class_frequencies = np.zeros(6)
+for data, seg, id in tmp:
+    print ctr
+    class_frequencies[0] += np.sum(seg[:, 2] == 0)
+    class_frequencies[1] += np.sum(seg[:, 2] == 1)
+    class_frequencies[2] += np.sum(seg[:, 2] == 2)
+    class_frequencies[3] += np.sum(seg[:, 2] == 3)
+    class_frequencies[4] += np.sum(seg[:, 2] == 4)
+    class_frequencies[5] += np.sum(seg[:, 2] == 5)
+    ctr += 1
+    if ctr >= 10000:
+        break
+'''
+class_frequencies = [  1.42895088e+10,   1.01550368e+08,   4.11170000e+05,
+         5.88980000e+06,   9.48286000e+05,   1.69157500e+06]
+
+
 dataset_folder = "/media/fabian/DeepLearningData/datasets/"
-EXPERIMENT_NAME = "segment_tumor_Unet_lossSampling_gradClip_nesterov_TitanX"
-memmap_name = "patchSegmentation_allInOne_ws_t1km_flair_adc_cbv_resized"
+EXPERIMENT_NAME = "segmentPatches_BraTS_2014_UNet_lossSampling_gradClip_adam_TitanX"
 results_dir = os.path.join("/home/fabian/datasets/Hirntumor_von_David/experiments/results/", EXPERIMENT_NAME)
 if not os.path.isdir(results_dir):
     os.mkdir(results_dir)
 
-BATCH_SIZE = 60
-PATCH_SIZE = 256
+BATCH_SIZE = 30
+PATCH_SIZE = (368, 352)
 
-with open(dataset_folder + "%s_properties.pkl" % (memmap_name), 'r') as f:
-    my_dict = cPickle.load(f)
 
-data_ctr = my_dict['n_data']
-train_shape = my_dict['train_neg_shape']
-info_memmap_shape = my_dict['info_shape']
-
-class_frequencies = np.zeros(5, dtype=np.float32)
-for i in range(5):
-    class_frequencies[i] = my_dict['class_frequencies'][i]
-class_frequencies = np.sqrt(class_frequencies)
+class_frequencies = np.array(class_frequencies).astype(np.float32)**0.5
 class_frequencies2 = deepcopy(class_frequencies)
-for i in range(5):
-    class_frequencies2[i] = class_frequencies[range(5) != i] / class_frequencies[i]
+for i in range(len(class_frequencies)):
+    class_frequencies2[i] = class_frequencies[range(len(class_frequencies)) != i] / class_frequencies[i]
 class_frequencies2 /= np.sum(class_frequencies2)
-class_frequencies2 *= 5
+class_frequencies2 *= len(class_frequencies)
 
-memmap_data = memmap(dataset_folder + "%s.memmap" % (memmap_name), dtype=np.float32, mode="r", shape=train_shape)
-memmap_gt = memmap(dataset_folder + "%s_info.memmap" % (memmap_name), dtype=np.float32, mode="r", shape=info_memmap_shape)
 
-patient_ids = np.unique(memmap_gt[:, 0]).astype(int)
-#validation_patients = np.random.choice(patient_ids, 15, False)
-
-# I should have used replace=False. Whatever...
-validation_patients = [ 75,   1,  67,   1, 127, 120,  94, 131,  78,  74,  62,  10,  65, 47, 124]
-
-n_training_samples = int(float(len(patient_ids) - len(validation_patients)) / float(len(patient_ids)) * memmap_data.shape[0])
-n_val_samples = int(float(len(validation_patients)) / float(len(patient_ids)) * memmap_data.shape[0])
+#validation_patients = np.random.choice(251, 25, False)
+validation_patients = [157,  69,   7,  97, 235,  12, 231, 200, 177, 104, 247,  41, 237, 24, 118, 198, 103,   6, 243,  35,   0,  18, 112, 180,  25]
 
 '''d, s, l = data_gen_train.next()
 plt.figure(figsize=(12, 5))
@@ -78,23 +81,18 @@ plt.imshow(d[0,0]-d1)
 plt.show()
 plt.close()'''
 
-data_gen_validation = memmapGenerator_allInOne_segmentation_lossSampling(memmap_data, memmap_gt, BATCH_SIZE, validation_patients, mode="test", ignore=[40])
-data_gen_validation = center_crop_generator(data_gen_validation, (PATCH_SIZE, PATCH_SIZE))
+data_gen_validation = SegmentationBatchGeneratorBraTS2014(all_patients, BATCH_SIZE, validation_patients, PATCH_SIZE=PATCH_SIZE, mode="test", ignore=[81], losses=None, num_batches=None, seed=None)
 data_gen_validation = seg_channel_selection_generator(data_gen_validation, [2])
-data_gen_validation = multi_threaded_generator(data_gen_validation, num_threads=4, num_cached=10)
+data_gen_validation = center_crop_seg_generator(data_gen_validation, (180, 164))
+data_gen_validation = Multithreaded_Generator(data_gen_validation, 2, 30)
+data_gen_validation._start()
 
-net = build_UNet(20, BATCH_SIZE, num_output_classes=5, base_n_filters=16, input_dim=(PATCH_SIZE, PATCH_SIZE))
+net = build_UNet(20, BATCH_SIZE, num_output_classes=6, base_n_filters=16, input_dim=PATCH_SIZE, pad="valid")
 output_layer_for_loss = net["output_flattened"]
-'''with open(os.path.join(results_dir, "%s_Params_ep30.pkl"%EXPERIMENT_NAME, 'r') as f:
-    params = cPickle.load(f)
-    lasagne.layers.set_all_param_values(output_layer_for_loss, params)
-with open(os.path.join(results_dir, "%s_allLossesNAccur_ep30.pkl"%EXPERIMENT_NAME, 'r') as f:
-    # [all_training_losses, all_training_accuracies, all_validation_losses, all_validation_accuracies, auc_all] = cPickle.load(f)
-    [all_training_losses, all_training_accuracies, all_validation_losses, all_validation_accuracies, auc_all, losses] = cPickle.load(f)'''
 
-n_batches_per_epoch = 250
+n_batches_per_epoch = 300
 # n_batches_per_epoch = np.floor(n_training_samples/float(BATCH_SIZE))
-n_test_batches = 50
+n_test_batches = 30
 # n_test_batches = np.floor(n_val_samples/float(BATCH_SIZE))
 
 x_sym = T.tensor4()
@@ -129,8 +127,8 @@ acc = T.mean(T.eq(T.argmax(prediction_test, axis=1), seg_sym), dtype=theano.conf
 params = lasagne.layers.get_all_params(output_layer_for_loss, trainable=True)
 grad = [theano.gradient.grad_clip(i, -10., 10.) for i in T.grad(loss, params)]
 learning_rate = theano.shared(np.float32(0.001))
-# updates = lasagne.updates.adam(grad, params, learning_rate=learning_rate)
-updates = lasagne.updates.nesterov_momentum(grad, params, learning_rate, 0.9)
+updates = lasagne.updates.adam(grad, params, learning_rate=learning_rate)
+# updates = lasagne.updates.nesterov_momentum(grad, params, learning_rate, 0.9)
 
 # create a convenience function to get the segmentation
 seg_output = lasagne.layers.get_output(net["output_segmentation"], x_sym, deterministic=True)
@@ -144,32 +142,63 @@ get_class_probas = theano.function([x_sym], prediction_test)
 
 n_feedbacks_per_epoch = 10.
 
-all_training_losses = []
-all_validation_losses = []
-all_validation_accuracies = []
-all_training_accuracies = []
-auc_all = []
 
-'''def update_loss_per_sample(loss_old, losses):
-    # computes a moving average on the losses
-    avg_loss = np.mean(losses[:, 1])
-    loss_new = (loss_old + losses/avg_loss) / 2.
-    return loss_new'''
-
-losses = np.ones(len(memmap_gt))
 def update_losses(losses, idx, loss):
     losses[idx] = (losses[idx] + loss*2.) / 3.
     return losses
 
 n_epochs = 30
 auc_scores=None
-for epoch in range(0,n_epochs):
-    data_gen_train = memmapGenerator_allInOne_segmentation_lossSampling(memmap_data, memmap_gt, BATCH_SIZE, validation_patients, mode="train", ignore=[40], losses=losses)
+
+start_from_epoch = 49
+if not start_from_epoch == 0:
+    learning_rate = learning_rate * (0.62 ** float(start_from_epoch))
+    epoch = start_from_epoch + 1
+    with open(os.path.join(results_dir, "%s_Params_ep%d.pkl" % (EXPERIMENT_NAME, start_from_epoch)), 'r') as f:
+        params = cPickle.load(f)
+        lasagne.layers.set_all_param_values(output_layer_for_loss, params)
+    with open(os.path.join(results_dir, "%s_allLossesNAccur_ep%d.pkl" % (EXPERIMENT_NAME, start_from_epoch)), 'r') as f:
+        [all_training_losses, all_training_accuracies, all_validation_losses, all_validation_accuracies, auc_all, losses] = cPickle.load(f)
+
+else:
+    all_training_losses = []
+    all_validation_losses = []
+    all_validation_accuracies = []
+    all_training_accuracies = []
+    auc_all = []
+
+    tmp = SegmentationBatchGeneratorBraTS2014(all_patients, BATCH_SIZE, validation_patients, PATCH_SIZE=PATCH_SIZE, mode="train", ignore=[81], losses=None, num_batches=None, seed=None)
+    losses = np.ones(tmp.get_losses().shape[0])
+    del tmp
+    epoch = 0
+
+def compare_seg_with_gt(max_n_images=5, epoch=0):
+    data_gen_validation = SegmentationBatchGeneratorBraTS2014(all_patients, BATCH_SIZE, validation_patients, PATCH_SIZE=PATCH_SIZE, mode="test", ignore=[81], losses=None, num_batches=None, seed=10)
+    data_gen_validation = seg_channel_selection_generator(data_gen_validation, [2])
+    data_gen_validation = center_crop_seg_generator(data_gen_validation, (180, 164))
+    data, seg, idx = data_gen_validation.next()
+    seg = np.array(seg)
+    seg_pred = get_segmentation(data)
+    plt.figure(figsize=(6, 12))
+    n_images = np.min((seg_pred.shape[0], max_n_images))
+    for i in range(n_images):
+        seg_pred[i][0, :6] = np.array([0,1,2,3,4,5])
+        seg[i,0,0,:6] = np.array([0,1,2,3,4,5])
+        plt.subplot(n_images, 2, 2*i+1)
+        plt.imshow(seg[i, 0])
+        plt.subplot(n_images, 2, 2*i+2)
+        plt.imshow(seg_pred[i])
+    plt.savefig(os.path.join(results_dir, "some_segmentations_ep_%d.png"%epoch))
+
+
+while epoch < 50:
+    data_gen_train = SegmentationBatchGeneratorBraTS2014(all_patients, BATCH_SIZE, validation_patients, PATCH_SIZE=(180, 164), mode="train", ignore=[81], losses=losses, num_batches=1500, seed=None)
     data_gen_train = seg_channel_selection_generator(data_gen_train, [2])
     data_gen_train = rotation_generator(data_gen_train)
-    data_gen_train = center_crop_generator(data_gen_train, (PATCH_SIZE, PATCH_SIZE))
-    data_gen_train = elastric_transform_generator(data_gen_train, 550., 20.)
-    data_gen_train = Multithreaded_Generator(data_gen_train, 12, 100)
+    data_gen_train = elastric_transform_generator(data_gen_train, 200., 14.)
+    data_gen_train = pad_generator(data_gen_train, PATCH_SIZE)
+    data_gen_train = center_crop_seg_generator(data_gen_train, (180, 164))
+    data_gen_train = Multithreaded_Generator(data_gen_train, 8, 50)
     data_gen_train._start()
     print "epoch: ", epoch
     train_loss = 0
@@ -184,7 +213,9 @@ for epoch in range(0,n_epochs):
             all_training_accuracies.append(train_acc_tmp/np.floor(n_batches_per_epoch/n_feedbacks_per_epoch))
             train_loss_tmp = 0
             train_acc_tmp = 0
-            printLosses(all_training_losses, all_training_accuracies, all_validation_losses, all_validation_accuracies, os.path.join(results_dir, "%s.png" % EXPERIMENT_NAME), n_feedbacks_per_epoch, auc_scores=auc_scores, auc_labels=["bg", "brain", "edema", "ce_tumor", "necrosis"], ylim_score=(0,0.75))
+            if len(auc_all) > 0:
+                auc_scores = np.concatenate(auc_all, axis=0).reshape(-1, len(class_frequencies2)-1)
+            printLosses(all_training_losses, all_training_accuracies, all_validation_losses, all_validation_accuracies, os.path.join(results_dir, "%s.png" % EXPERIMENT_NAME), n_feedbacks_per_epoch, auc_scores=auc_scores, auc_labels=["brain", "1", "2", "3", "4"], ylim_score=(0,0.08))
         # loss, acc = train_fn(data, convert_seg_map_for_crossentropy(seg, range(4)).astype(np.float32))
         seg_flat = seg.flatten().astype(np.int32)
         w = class_frequencies2[seg_flat]
@@ -203,7 +234,7 @@ for epoch in range(0,n_epochs):
 
     train_loss /= n_batches_per_epoch
     print "training loss average on epoch: ", train_loss
-    if epoch <= 2:
+    if epoch <= 1:
         losses[:] = 100.
 
     y_true = []
@@ -219,8 +250,8 @@ for epoch in range(0,n_epochs):
         test_loss += loss
         accuracies.append(acc)
         valid_batch_ctr += 1
-        y_true.append(convert_seg_flat_to_binary_label_indicator_array(seg_flat))
-        y_pred.append(get_class_probas(data))
+        y_true.append(convert_seg_flat_to_binary_label_indicator_array(seg_flat[seg_flat!=0]-1, len(class_frequencies2)-1))
+        y_pred.append(get_class_probas(data)[seg_flat!=0, :][:, 1:])
         if valid_batch_ctr > n_test_batches:
             break
     test_loss /= n_test_batches
@@ -229,25 +260,33 @@ for epoch in range(0,n_epochs):
     y_true = np.concatenate(y_true, axis=0)
     y_pred = np.concatenate(y_pred, axis=0)
     scores = roc_auc_score(y_true, y_pred, None)
+    del y_pred, y_true
     auc_all.append(scores)
     all_validation_losses.append(test_loss)
     all_validation_accuracies.append(np.mean(accuracies))
-    auc_scores = np.concatenate(auc_all, axis=0).reshape(-1, 5)
-    printLosses(all_training_losses, all_training_accuracies, all_validation_losses, all_validation_accuracies, os.path.join(results_dir, "%s.png" % EXPERIMENT_NAME), n_feedbacks_per_epoch, auc_scores=auc_scores, auc_labels=["bg", "brain", "edema", "ce_tumor", "necrosis"], ylim_score=(0,0.75))
-    # learning_rate *= 0.62
+    auc_scores = np.concatenate(auc_all, axis=0).reshape(-1, len(class_frequencies2)-1)
+    printLosses(all_training_losses, all_training_accuracies, all_validation_losses, all_validation_accuracies, os.path.join(results_dir, "%s.png" % EXPERIMENT_NAME), n_feedbacks_per_epoch, auc_scores=auc_scores, auc_labels=["brain", "1", "2", "3", "4"], ylim_score=(0,0.08))
     with open(os.path.join(results_dir, "%s_Params_ep%d.pkl" % (EXPERIMENT_NAME, epoch)), 'w') as f:
         cPickle.dump(lasagne.layers.get_all_param_values(output_layer_for_loss), f)
     with open(os.path.join(results_dir, "%s_allLossesNAccur_ep%d.pkl"% (EXPERIMENT_NAME, epoch)), 'w') as f:
         cPickle.dump([all_training_losses, all_training_accuracies, all_validation_losses, all_validation_accuracies, auc_all, losses], f)
     with open(os.path.join(results_dir, "%s_lossPerPatch_ep%d.pkl"% (EXPERIMENT_NAME, epoch)), 'w') as f:
         cPickle.dump(losses, f)
+    if (epoch > 1) and (all_validation_losses[-1] / all_validation_losses[-2] > 1.5):
+        print "ouch... lets revert to the last epoch"
+        with open(os.path.join(results_dir, "%s_Params_ep%d.pkl" % (EXPERIMENT_NAME, epoch -1)), 'r') as f:
+            params = cPickle.load(f)
+            lasagne.layers.set_all_param_values(output_layer_for_loss, params)
+        with open(os.path.join(results_dir, "%s_allLossesNAccur_ep%d.pkl" % (EXPERIMENT_NAME, epoch - 1)), 'r') as f:
+            [all_training_losses, all_training_accuracies, all_validation_losses, all_validation_accuracies, auc_all, losses] = cPickle.load(f)
+    else:
+        compare_seg_with_gt(5, epoch)
+        epoch += 1
+        learning_rate *= 0.62
+
+data_gen_validation._finish()
 
 '''
-import cPickle
-with open("../../../results/%s_Params.pkl"%EXPERIMENT_NAME, 'w') as f:
-    cPickle.dump(lasagne.layers.get_all_param_values(output_layer_for_loss), f)
-with open("../../../results/%s_allLossesNAccur.pkl"%EXPERIMENT_NAME, 'w') as f:
-    cPickle.dump([all_training_losses, all_training_accuracies, all_validation_losses, all_validation_accuracies], f)
 
 img_ctr = 0
 batch_ctr2 = 0
